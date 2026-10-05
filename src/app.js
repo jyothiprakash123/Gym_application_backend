@@ -47,7 +47,7 @@ app.use(cookieParser());
 // ======================================================
 // HEALTH CHECK
 // ======================================================
-
+console.log("🔥 APP.JS LOADED - GYM BACKEND VERSION 2");
 app.get("/api/health", (req, res) => {
   res.status(200).json({
     success: true,
