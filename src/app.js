@@ -27,9 +27,20 @@ const app = express();
 // GLOBAL MIDDLEWARE
 // ======================================================
 
+const allowedOrigins = [
+  "https://gym-application-frontend-seven.vercel.app",
+  "http://localhost:5173",
+];
+
 app.use(
   cors({
-    origin: process.env.CLIENT_URL,
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`CORS blocked origin: ${origin}`));
+      }
+    },
     credentials: true,
   })
 );
