@@ -17,6 +17,7 @@ const achievementRoutes = require("./routes/achievementRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 const leadRoutes = require("./routes/leadRoutes");
 const expenseRoutes = require("./routes/expenseRoutes");
+const billingPlanRoutes = require("./routes/billingPlanRoutes");
 
 const authenticate = require("./middleware/authMiddleware");
 const authorizeRoles = require("./middleware/roleMiddleware");
@@ -90,6 +91,7 @@ app.use("/api/achievements", achievementRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/leads", leadRoutes);
 app.use("/api/expenses", expenseRoutes);
+app.use("/api/billing-plans", billingPlanRoutes);
 
 // ======================================================
 // SUPER ADMIN TEST ROUTE

@@ -3,6 +3,7 @@ const authenticate = require("../middleware/authMiddleware");
 const authorizeRoles = require("../middleware/roleMiddleware");
 
 const {
+  exportPlans,
   createPlan,
   getPlans,
   getPlanById,
@@ -16,6 +17,7 @@ const router = express.Router();
 router.use(authenticate);
 
 router.post("/", authorizeRoles("system-admin", "super-admin", "admin"), createPlan);
+router.get("/export", exportPlans);
 router.get("/", getPlans);
 router.get("/:id", getPlanById);
 router.put("/:id", authorizeRoles("system-admin", "super-admin", "admin"), updatePlan);

@@ -14,6 +14,7 @@ const createGym = async (req, res, next) => {
       city,
       state,
       country,
+      billingPlanId,
     } = req.body;
 
     // --------------------------------------------------
@@ -52,11 +53,12 @@ const createGym = async (req, res, next) => {
         phone,
         city,
         state,
-        country
+        country,
+        billing_plan_id
       )
       VALUES (
         $1, $2, $3, $4,
-        $5, $6, $7, $8
+        $5, $6, $7, $8, $9
       )
       RETURNING
         id,
@@ -82,6 +84,7 @@ const createGym = async (req, res, next) => {
         city || null,
         state || null,
         country || null,
+        billingPlanId || null,
       ]
     );
 
@@ -152,6 +155,7 @@ const getGyms = async (req, res, next) => {
         state,
         country,
         billing_plan_id,
+        (SELECT name FROM billing_plans WHERE id = gyms.billing_plan_id) AS billing_plan_name,
         is_active,
         created_at,
         updated_at
