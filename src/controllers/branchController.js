@@ -201,15 +201,20 @@ const getBranches = async (req, res, next) => {
       conditions.push(`b.manager_id = $${countParams.length + 1}`);
       countParams.push(req.user.id);
       dataParams.push(req.user.id);
-    } else if (req.user.role_name !== "system-admin" && req.user.role_name !== "super-admin") {
+    } else if (req.user.role_name === "super-admin") {
+      // Super admin only sees branches of their gym
+      conditions.push(`b.gym_id = $${countParams.length + 1}`);
+      countParams.push(req.user.gym_id);
+      dataParams.push(req.user.gym_id);
+    } else if (req.user.role_name !== "system-admin") {
       return res.status(403).json({
         success: false,
         message: "You do not have permission to view branches",
       });
     }
 
-    // Gym Filter Condition
-    if (gymId) {
+    // Gym Filter Condition for system-admin
+    if (req.user.role_name === "system-admin" && gymId) {
       conditions.push(`b.gym_id = $${countParams.length + 1}`);
       countParams.push(gymId);
       dataParams.push(gymId);

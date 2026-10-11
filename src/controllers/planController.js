@@ -297,7 +297,67 @@ const hardDeletePlan = async (req, res, next) => {
   }
 };
 
+
+const exportPlans = async (req, res, next) => {
+  try {
+    const search = req.query.search || "";
+    const branchId = req.query.branchId;
+    const gymId = req.query.gymId;
+
+    let baseQuery = `FROM membership_plans p LEFT JOIN branches b ON p.branch_id = b.id LEFT JOIN gyms g ON g.id = b.gym_id`;
+    let dataParams = [];
+    let conditions = [];
+
+    if (req.user.role_name === "admin") {
+      conditions.push(`b.manager_id = ${dataParams.length + 1}`);
+      dataParams.push(req.user.id);
+    }
+
+    if (gymId) {
+      conditions.push(`g.id = ${dataParams.length + 1}`);
+      dataParams.push(gymId);
+    }
+    if (branchId) {
+      conditions.push(`b.id = ${dataParams.length + 1}`);
+      dataParams.push(branchId);
+    }
+    if (search) {
+      conditions.push(`(p.name ILIKE ${dataParams.length + 1})`);
+      dataParams.push(`%${search}%`);
+    }
+
+    let whereClause = conditions.length > 0 ? "WHERE " + conditions.join(" AND ") : "";
+
+    const query = `
+      SELECT 
+        p.id, p.name, p.duration_days, p.price, p.max_freeze_days, 
+        CASE WHEN p.is_active THEN 'Active' ELSE 'Inactive' END as status,
+        g.name as gym_name,
+        b.name as branch_name
+      ${baseQuery}
+      ${whereClause}
+      ORDER BY p.created_at DESC
+    `;
+
+    const { rows } = await pool.query(query, dataParams);
+    if (!rows || rows.length === 0) {
+      return res.status(404).send("No records found");
+    }
+
+    const headers = Object.keys(rows[0]).join(",");
+    const csvRows = rows.map(row => Object.values(row).map(val => `"${val || ''}"`).join(","));
+    const csvContent = [headers, ...csvRows].join("\n");
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="plans_export.csv"');
+    res.send(csvContent);
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
+  exportPlans,
   createPlan,
   getPlans,
   getPlanById,
