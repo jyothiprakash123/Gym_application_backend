@@ -124,7 +124,12 @@ const getGyms = async (req, res, next) => {
     let countParams = [];
     let queryParams = [];
 
-    if (gymId) {
+    // Non-system-admin users can only view their own gym
+    if (req.user.role_name !== "system-admin") {
+      conditions.push(`(id = $${countParams.length + 1} OR owner_id = $${countParams.length + 2})`);
+      countParams.push(req.user.gym_id, req.user.id);
+      queryParams.push(req.user.gym_id, req.user.id);
+    } else if (gymId) {
       conditions.push(`id = $${countParams.length + 1}`);
       countParams.push(gymId);
       queryParams.push(gymId);

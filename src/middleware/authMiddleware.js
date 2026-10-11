@@ -50,6 +50,8 @@ const authenticate = async (req, res, next) => {
         u.full_name,
         u.phone,
         u.role_id,
+        u.gym_id,
+        u.branch_id,
         u.is_active,
         r.name AS role_name
       FROM users u

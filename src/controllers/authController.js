@@ -64,6 +64,8 @@ const login = async (req, res, next) => {
         u.full_name,
         u.phone,
         u.role_id,
+        u.gym_id,
+        u.branch_id,
         u.is_active,
         u.last_login,
         r.name AS role_name
@@ -180,7 +182,7 @@ const login = async (req, res, next) => {
       refreshToken,
       refreshCookieOptions
     );
-    
+
     res.cookie(
       "accessToken",
       accessToken,
@@ -203,6 +205,8 @@ const login = async (req, res, next) => {
           email: user.email,
           fullName: user.full_name,
           phone: user.phone,
+          gym_id: user.gym_id,
+          branch_id: user.branch_id,
 
           role: {
             id: user.role_id,
@@ -445,6 +449,8 @@ const me = async (req, res) => {
         email: req.user.email,
         fullName: req.user.full_name,
         phone: req.user.phone,
+        gym_id: req.user.gym_id,
+        branch_id: req.user.branch_id,
 
         role: {
           id: req.user.role_id,
