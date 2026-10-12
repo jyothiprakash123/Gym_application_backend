@@ -35,7 +35,7 @@ const accessCookieOptions = {
 const login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
-    console.log(email, password);
+    console.log("Login attempt received");
 
     // ----------------------------------------------
     // 1. Validate input
