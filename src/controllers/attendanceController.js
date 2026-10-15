@@ -212,6 +212,8 @@ const getAttendance = async (req, res, next) => {
     const branchId = req.query.branchId || null;
     const gymId = req.query.gymId || null;
     const date = req.query.date || req.query.attendanceDate || null;
+    const startDate = req.query.startDate || null;
+    const endDate = req.query.endDate || null;
     const status = req.query.status !== undefined && req.query.status !== "" ? req.query.status : null;
     const isBulkView = req.query.view === "bulk";
     const offset = (page - 1) * limit;
@@ -248,7 +250,19 @@ const getAttendance = async (req, res, next) => {
         dataParams.push(gymId);
       }
 
-      if (date) {
+      if (startDate && endDate) {
+        bulkBaseQuery += ` AND a.attendance_date BETWEEN $${countParams.length + 1} AND $${countParams.length + 2}`;
+        countParams.push(startDate, endDate);
+        dataParams.push(startDate, endDate);
+      } else if (startDate) {
+        bulkBaseQuery += ` AND a.attendance_date >= $${countParams.length + 1}`;
+        countParams.push(startDate);
+        dataParams.push(startDate);
+      } else if (endDate) {
+        bulkBaseQuery += ` AND a.attendance_date <= $${countParams.length + 1}`;
+        countParams.push(endDate);
+        dataParams.push(endDate);
+      } else if (date) {
         bulkBaseQuery += ` AND a.attendance_date = $${countParams.length + 1}`;
         countParams.push(date);
         dataParams.push(date);
@@ -348,7 +362,19 @@ const getAttendance = async (req, res, next) => {
       dataParams.push(gymId);
     }
 
-    if (date) {
+    if (startDate && endDate) {
+      baseQuery += ` AND a.attendance_date BETWEEN $${countParams.length + 1} AND $${countParams.length + 2}`;
+      countParams.push(startDate, endDate);
+      dataParams.push(startDate, endDate);
+    } else if (startDate) {
+      baseQuery += ` AND a.attendance_date >= $${countParams.length + 1}`;
+      countParams.push(startDate);
+      dataParams.push(startDate);
+    } else if (endDate) {
+      baseQuery += ` AND a.attendance_date <= $${countParams.length + 1}`;
+      countParams.push(endDate);
+      dataParams.push(endDate);
+    } else if (date) {
       baseQuery += ` AND a.attendance_date = $${countParams.length + 1}`;
       countParams.push(date);
       dataParams.push(date);
