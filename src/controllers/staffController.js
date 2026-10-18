@@ -23,6 +23,24 @@ const createStaff = async (req, res, next) => {
       });
     }
 
+    const cleanPhone = String(phone).replace(/\D/g, "");
+    if (!cleanPhone || cleanPhone.length < 10 || cleanPhone.length > 15) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number must be between 10 and 15 digits",
+      });
+    }
+
+    if (email && email.trim()) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email.trim())) {
+        return res.status(400).json({
+          success: false,
+          message: "Please enter a valid email address",
+        });
+      }
+    }
+
     const branchResult = await pool.query(
       `
       SELECT
@@ -326,6 +344,26 @@ const updateStaff = async (req, res, next) => {
         return res.status(400).json({
           success: false,
           message: "Cannot move staff to an inactive branch",
+        });
+      }
+    }
+
+    if (phone !== undefined) {
+      const cleanPhone = String(phone).replace(/\D/g, "");
+      if (!cleanPhone || cleanPhone.length < 10 || cleanPhone.length > 15) {
+        return res.status(400).json({
+          success: false,
+          message: "Phone number must be between 10 and 15 digits",
+        });
+      }
+    }
+
+    if (email !== undefined && email && email.trim()) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email.trim())) {
+        return res.status(400).json({
+          success: false,
+          message: "Please enter a valid email address",
         });
       }
     }
