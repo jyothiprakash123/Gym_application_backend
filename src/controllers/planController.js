@@ -111,9 +111,15 @@ const getPlans = async (req, res, next) => {
       baseQuery += ` WHERE ` + conditions.join(" AND ");
     }
 
-    const countQuery = `SELECT COUNT(*) ${baseQuery}`;
-    const countResult = await pool.query(countQuery, countParams);
-    const totalItems = parseInt(countResult.rows[0].count, 10);
+    const statsQuery = `
+      SELECT 
+        COUNT(*)::int AS total_items,
+        COUNT(CASE WHEN p.is_active = true THEN 1 END)::int AS active_items
+      ${baseQuery}
+    `;
+    const statsResult = await pool.query(statsQuery, countParams);
+    const totalItems = parseInt(statsResult.rows[0]?.total_items, 10) || 0;
+    const activePlans = parseInt(statsResult.rows[0]?.active_items, 10) || 0;
     const totalPages = Math.ceil(totalItems / limit);
 
     dataParams.push(limit, offset);
@@ -132,6 +138,10 @@ const getPlans = async (req, res, next) => {
       success: true,
       data: {
         plans: result.rows,
+        stats: {
+          totalPlans: totalItems,
+          activePlans,
+        },
         pagination: {
           totalItems,
           totalPages,

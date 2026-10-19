@@ -30,6 +30,34 @@ const createMember = async (req, res, next) => {
       });
     }
 
+    const cleanPhone = String(phone).replace(/\D/g, "");
+    if (!cleanPhone || cleanPhone.length < 10 || cleanPhone.length > 15) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number must be between 10 and 15 digits",
+      });
+    }
+
+    if (email && email.trim()) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email.trim())) {
+        return res.status(400).json({
+          success: false,
+          message: "Please enter a valid email address",
+        });
+      }
+    }
+
+    if (emergencyContactPhone && emergencyContactPhone.trim()) {
+      const cleanEmerPhone = String(emergencyContactPhone).replace(/\D/g, "");
+      if (cleanEmerPhone.length < 10 || cleanEmerPhone.length > 15) {
+        return res.status(400).json({
+          success: false,
+          message: "Emergency contact phone must be between 10 and 15 digits",
+        });
+      }
+    }
+
     const branchResult = await pool.query(
       `
       SELECT
@@ -538,6 +566,36 @@ const updateMember = async (req, res, next) => {
     // --------------------------------------------------
     // Validate new branch if provided
     // --------------------------------------------------
+
+    if (phone !== undefined) {
+      const cleanPhone = String(phone).replace(/\D/g, "");
+      if (!cleanPhone || cleanPhone.length < 10 || cleanPhone.length > 15) {
+        return res.status(400).json({
+          success: false,
+          message: "Phone number must be between 10 and 15 digits",
+        });
+      }
+    }
+
+    if (email !== undefined && email && email.trim()) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email.trim())) {
+        return res.status(400).json({
+          success: false,
+          message: "Please enter a valid email address",
+        });
+      }
+    }
+
+    if (emergencyContactPhone !== undefined && emergencyContactPhone && emergencyContactPhone.trim()) {
+      const cleanEmerPhone = String(emergencyContactPhone).replace(/\D/g, "");
+      if (cleanEmerPhone.length < 10 || cleanEmerPhone.length > 15) {
+        return res.status(400).json({
+          success: false,
+          message: "Emergency contact phone must be between 10 and 15 digits",
+        });
+      }
+    }
 
     if (branchId !== undefined) {
       const branchResult = await pool.query(
