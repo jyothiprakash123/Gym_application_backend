@@ -21,18 +21,27 @@ const createPayment = async (req, res, next) => {
       const planResult = await pool.query('SELECT duration_days FROM membership_plans WHERE id = $1', [planId]);
       if (planResult.rows.length > 0) {
         const durationDays = planResult.rows[0].duration_days || 30;
+        const formatLocalDate = (d) => {
+          const year = d.getFullYear();
+          const month = String(d.getMonth() + 1).padStart(2, '0');
+          const day = String(d.getDate()).padStart(2, '0');
+          return `${year}-${month}-${day}`;
+        };
+
         let startDate;
+        let startDateStr;
         if (reqStartDate) {
-          // If reqStartDate is "YYYY-MM-DD", appending "T00:00:00" ensures it's parsed in local timezone
-          startDate = new Date(reqStartDate.includes("T") ? reqStartDate : reqStartDate + "T00:00:00");
+          startDateStr = reqStartDate.split("T")[0];
+          const [sYear, sMonth, sDay] = startDateStr.split("-").map(Number);
+          startDate = new Date(sYear, sMonth - 1, sDay);
         } else {
           startDate = new Date();
+          startDateStr = formatLocalDate(startDate);
         }
+
         const endDate = new Date(startDate);
         endDate.setDate(startDate.getDate() + durationDays);
-
-        const startDateStr = startDate.toISOString().split('T')[0];
-        const endDateStr = endDate.toISOString().split('T')[0];
+        const endDateStr = formatLocalDate(endDate);
 
         // Check if this member already has a membership starting on this date, or ending on this date
         // to prevent duplicate renewals or edits from creating new records.
@@ -47,7 +56,7 @@ const createPayment = async (req, res, next) => {
           // Update the membership with the new plan and end date
           await pool.query(
             `UPDATE member_memberships SET plan_id = $1, start_date = $2, end_date = $3 WHERE id = $4`,
-            [planId, startDate, endDate, actualMembershipId]
+            [planId, startDateStr, endDateStr, actualMembershipId]
           );
 
           // Check if there is an existing payment for this membership
@@ -120,13 +129,21 @@ const createPayment = async (req, res, next) => {
              });
           }
           
+          // Mark prior ended memberships as expired
+          await pool.query(
+            `UPDATE member_memberships 
+             SET status = 'expired' 
+             WHERE member_id = $1 AND end_date < $2 AND status = 'active'`,
+            [memberId, startDateStr]
+          );
+
           const membershipResult = await pool.query(
             `
             INSERT INTO member_memberships (
               member_id, plan_id, gym_id, branch_id, start_date, end_date, status
             ) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id
             `,
-            [memberId, planId, gymId || null, branchId, startDate, endDate, 'active']
+            [memberId, planId, gymId || null, branchId, startDateStr, endDateStr, 'active']
           );
           actualMembershipId = membershipResult.rows[0].id;
         }
@@ -202,6 +219,7 @@ const getPayments = async (req, res, next) => {
     const search = req.query.search || "";
     const branchId = req.query.branchId;
     const gymId = req.query.gymId;
+    const memberId = req.query.memberId;
     const offset = (page - 1) * limit;
 
     let baseQuery = `
@@ -209,6 +227,8 @@ const getPayments = async (req, res, next) => {
       LEFT JOIN members m ON p.member_id = m.id
       LEFT JOIN branches b ON p.branch_id = b.id
       LEFT JOIN gyms g ON b.gym_id = g.id
+      LEFT JOIN member_memberships mm ON p.membership_id = mm.id
+      LEFT JOIN membership_plans mp ON mm.plan_id = mp.id
     `;
     let countParams = [];
     let dataParams = [];
@@ -224,6 +244,12 @@ const getPayments = async (req, res, next) => {
         success: false,
         message: "You do not have permission to view payments",
       });
+    }
+
+    if (memberId) {
+      conditions.push(`p.member_id = $${countParams.length + 1}`);
+      countParams.push(memberId);
+      dataParams.push(memberId);
     }
 
     if (branchId) {
@@ -260,9 +286,12 @@ const getPayments = async (req, res, next) => {
         p.*,
         m.full_name AS member_name,
         b.name AS branch_name,
-        g.name AS gym_name
+        g.name AS gym_name,
+        mp.name AS plan_name,
+        mm.start_date,
+        mm.end_date
       ${baseQuery}
-      ORDER BY p.created_at DESC
+      ORDER BY p.payment_date DESC, p.created_at DESC
       ${limitOffsetCondition}
     `;
 

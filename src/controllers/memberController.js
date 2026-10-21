@@ -502,10 +502,37 @@ const getMemberById = async (req, res, next) => {
       });
     }
 
+    // Fetch payment history for this member
+    const paymentsResult = await pool.query(
+      `
+      SELECT 
+        p.id,
+        p.amount,
+        p.payment_mode,
+        p.payment_ref,
+        p.payment_date,
+        p.status,
+        p.notes,
+        p.created_at,
+        mp.name AS plan_name,
+        mm.start_date,
+        mm.end_date
+      FROM payments p
+      LEFT JOIN member_memberships mm ON p.membership_id = mm.id
+      LEFT JOIN membership_plans mp ON mm.plan_id = mp.id
+      WHERE p.member_id = $1
+      ORDER BY p.payment_date DESC, p.created_at DESC
+      `,
+      [id]
+    );
+
     return res.status(200).json({
       success: true,
       data: {
-        member: result.rows[0],
+        member: {
+          ...result.rows[0],
+          payments: paymentsResult.rows,
+        },
       },
     });
   } catch (error) {
