@@ -4,6 +4,9 @@ const {
   createMember,
   getMembers,
   exportMembers,
+  importMembers,
+  holdMemberFees,
+  resumeMemberFees,
   getMemberById,
   updateMember,
   deleteMember,
@@ -56,6 +59,48 @@ router.get(
     "front-desk"
   ),
   exportMembers
+);
+
+// ======================================================
+// IMPORT MEMBERS
+// ======================================================
+
+router.post(
+  "/import",
+  authenticate,
+  authorizeRoles("system-admin", "super-admin",
+    "admin",
+    "front-desk"
+  ),
+  importMembers
+);
+
+// ======================================================
+// HOLD FEES (FREEZE MEMBERSHIP)
+// ======================================================
+
+router.post(
+  "/:id/hold-fees",
+  authenticate,
+  authorizeRoles("system-admin", "super-admin",
+    "admin",
+    "front-desk"
+  ),
+  holdMemberFees
+);
+
+// ======================================================
+// RESUME FEES (UNFREEZE MEMBERSHIP)
+// ======================================================
+
+router.post(
+  "/:id/resume-fees",
+  authenticate,
+  authorizeRoles("system-admin", "super-admin",
+    "admin",
+    "front-desk"
+  ),
+  resumeMemberFees
 );
 
 // ======================================================

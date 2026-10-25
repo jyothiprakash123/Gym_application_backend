@@ -10,7 +10,13 @@ const {
   getSidebar,
   getAllMenuItems,
   getRolePermissions,
-  updateRolePermissions
+  updateRolePermissions,
+  getGranularPermissions,
+  updateGranularPermissions,
+  resetGymPermissionsToCommon,
+  getModulesConfig,
+  updateModulesConfig,
+  resetGymModulesToCommon
 } = require("../controllers/settingsController");
 
 const authenticate = require("../middleware/authMiddleware");
@@ -20,6 +26,16 @@ router.get("/", authenticate, getSettings);
 
 // Upsert setting
 router.post("/", authenticate, upsertSetting);
+
+// Granular Permissions
+router.get("/granular-permissions", authenticate, getGranularPermissions);
+router.put("/granular-permissions", authenticate, updateGranularPermissions);
+router.post("/granular-permissions/reset", authenticate, resetGymPermissionsToCommon);
+
+// Modules Configuration (On/Off)
+router.get("/modules", authenticate, getModulesConfig);
+router.put("/modules", authenticate, updateModulesConfig);
+router.post("/modules/reset", authenticate, resetGymModulesToCommon);
 
 // Sidebar and Permissions
 router.get("/sidebar", authenticate, getSidebar);

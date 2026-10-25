@@ -184,14 +184,31 @@ const getMembers = async (req, res, next) => {
     const gymId = req.query.gymId;
     const offset = (page - 1) * limit;
 
+    // Automatically resume memberships whose freeze_end has passed
+    try {
+      await pool.query(
+        "UPDATE member_memberships SET status = 'active', updated_at = NOW() WHERE status = 'on_hold' AND freeze_end < CURRENT_DATE"
+      );
+    } catch (autoErr) {
+      console.error("Auto resume check failed:", autoErr);
+    }
+
     let baseQuery = `FROM members m 
     LEFT JOIN branches b ON b.id = m.branch_id 
     LEFT JOIN gyms g ON g.id = b.gym_id
     LEFT JOIN LATERAL (
-      SELECT mp.name as plan_name, mm.end_date as expiry_date, mm.plan_id
+      SELECT 
+        mp.name as plan_name, 
+        mm.end_date as expiry_date, 
+        mm.plan_id,
+        mm.id as membership_id,
+        mm.status as membership_status,
+        mm.freeze_start,
+        mm.freeze_end,
+        mp.max_freeze_days
       FROM member_memberships mm
       JOIN membership_plans mp ON mp.id = mm.plan_id
-      WHERE mm.member_id = m.id AND mm.status = 'active'
+      WHERE mm.member_id = m.id AND mm.status IN ('active', 'on_hold')
       ORDER BY mm.end_date DESC
       LIMIT 1
     ) active_plan ON true`;
@@ -291,7 +308,12 @@ const getMembers = async (req, res, next) => {
         m.updated_at,
         active_plan.plan_name,
         active_plan.expiry_date,
-        active_plan.plan_id
+        active_plan.plan_id,
+        active_plan.membership_id,
+        active_plan.membership_status,
+        active_plan.freeze_start,
+        active_plan.freeze_end,
+        active_plan.max_freeze_days
       ${baseQuery}
       ORDER BY m.created_at DESC
       ${limitOffsetCondition}
@@ -332,10 +354,14 @@ const exportMembers = async (req, res, next) => {
     LEFT JOIN branches b ON b.id = m.branch_id 
     LEFT JOIN gyms g ON g.id = b.gym_id
     LEFT JOIN LATERAL (
-      SELECT mp.name as plan_name, mm.end_date as expiry_date, mm.plan_id
+      SELECT 
+        mp.name as plan_name, 
+        mm.end_date as expiry_date, 
+        mm.plan_id,
+        mm.status as membership_status
       FROM member_memberships mm
       JOIN membership_plans mp ON mp.id = mm.plan_id
-      WHERE mm.member_id = m.id AND mm.status = 'active'
+      WHERE mm.member_id = m.id AND mm.status IN ('active', 'on_hold')
       ORDER BY mm.end_date DESC
       LIMIT 1
     ) active_plan ON true`;
@@ -404,7 +430,8 @@ const exportMembers = async (req, res, next) => {
         m.join_date,
         m.is_active,
         active_plan.plan_name,
-        active_plan.expiry_date
+        active_plan.expiry_date,
+        active_plan.membership_status
       ${baseQuery}
       ORDER BY m.created_at DESC
     `;
@@ -416,16 +443,24 @@ const exportMembers = async (req, res, next) => {
     const csvRows = [headers.join(",")];
 
     members.forEach((m, index) => {
+      const planLabel = m.membership_status === 'on_hold' 
+        ? `${m.plan_name || 'Plan'} (On Hold)` 
+        : (m.plan_name || 'No plan');
+
+      const statusLabel = m.membership_status === 'on_hold' 
+        ? "On Hold" 
+        : (m.is_active ? "Active" : "Inactive");
+
       const row = [
         index + 1,
         `"${m.full_name || ''}"`,
         `"${m.email || ''}"`,
         `"${m.phone || ''}"`,
-        `"${m.plan_name || 'No plan'}"`,
+        `"${planLabel}"`,
         `"${m.expiry_date ? new Date(m.expiry_date).toLocaleDateString() : ''}"`,
         `"${m.gym_name || ''}"`,
         `"${m.branch_name || ''}"`,
-        m.is_active ? "Active" : "Inactive"
+        statusLabel
       ];
       csvRows.push(row.join(","));
     });
@@ -438,6 +473,291 @@ const exportMembers = async (req, res, next) => {
 
   } catch (error) {
     next(error);
+  }
+};
+
+// ======================================================
+// IMPORT MEMBERS (BATCH CSV)
+// ======================================================
+
+const parseDateSafe = (val) => {
+  if (!val) return null;
+  const str = String(val).trim();
+  if (!str) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+
+  const parts = str.split(/[\/\-\.]/);
+  if (parts.length === 3) {
+    if (parts[0].length === 4) {
+      const year = parts[0];
+      const month = String(parts[1]).padStart(2, "0");
+      const day = String(parts[2]).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+    if (parts[2].length === 4) {
+      const year = parts[2];
+      const p0 = parseInt(parts[0], 10);
+      const p1 = parseInt(parts[1], 10);
+      if (p0 > 12 && p1 <= 12) {
+        return `${year}-${String(p1).padStart(2, "0")}-${String(p0).padStart(2, "0")}`;
+      } else if (p1 > 12 && p0 <= 12) {
+        return `${year}-${String(p0).padStart(2, "0")}-${String(p1).padStart(2, "0")}`;
+      }
+    }
+  }
+
+  const parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) {
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, "0");
+    const d = String(parsed.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+
+  return null;
+};
+
+const importMembers = async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    const { branchId, members } = req.body;
+
+    if (!Array.isArray(members) || members.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No members provided for import",
+      });
+    }
+
+    // Role-based branch access validation
+    let branchQuery = `SELECT b.id, b.name, b.gym_id, b.is_active FROM branches b`;
+    let branchParams = [];
+
+    if (req.user.role_name === "admin") {
+      branchQuery += ` WHERE b.manager_id = $1 OR b.id = $2`;
+      branchParams.push(req.user.id, req.user.branch_id || req.user.id);
+    } else if (req.user.role_name === "super-admin") {
+      branchQuery += ` WHERE b.gym_id = $1`;
+      branchParams.push(req.user.gym_id);
+    } else if (req.user.role_name === "front-desk") {
+      branchQuery += ` WHERE b.id = $1`;
+      branchParams.push(req.user.branch_id);
+    } else if (req.user.role_name !== "system-admin") {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to import members",
+      });
+    }
+
+    const branchesRes = await client.query(branchQuery, branchParams);
+    const accessibleBranches = branchesRes.rows;
+
+    const branchMapById = new Map();
+    const branchMapByName = new Map();
+    for (const b of accessibleBranches) {
+      branchMapById.set(b.id, b);
+      branchMapByName.set(b.name.trim().toLowerCase(), b);
+    }
+
+    // Default branch selection
+    let defaultBranch = null;
+    if (branchId) {
+      defaultBranch = branchMapById.get(branchId);
+      if (!defaultBranch && req.user.role_name === "system-admin") {
+        const bRes = await client.query("SELECT id, name, gym_id, is_active FROM branches WHERE id = $1", [branchId]);
+        if (bRes.rows.length > 0) {
+          defaultBranch = bRes.rows[0];
+          branchMapById.set(defaultBranch.id, defaultBranch);
+          branchMapByName.set(defaultBranch.name.trim().toLowerCase(), defaultBranch);
+        }
+      }
+    } else if (req.user.branch_id && branchMapById.has(req.user.branch_id)) {
+      defaultBranch = branchMapById.get(req.user.branch_id);
+    } else if (accessibleBranches.length === 1) {
+      defaultBranch = accessibleBranches[0];
+    }
+
+    const imported = [];
+    const skipped = [];
+    const seenPhonesInBatch = new Set();
+
+    await client.query("BEGIN");
+
+    for (let i = 0; i < members.length; i++) {
+      const row = members[i];
+      const rowNum = row.rowNumber || (i + 1);
+      const fullName = (row.fullName || row.name || "").trim();
+      const rawPhone = row.phone || row.contact || "";
+      const cleanPhone = String(rawPhone).replace(/\D/g, "");
+      const email = (row.email || "").trim().toLowerCase() || null;
+      const gender = (row.gender || "").trim() || null;
+      const dateOfBirth = parseDateSafe(row.dateOfBirth || row.dob);
+      const address = (row.address || "").trim() || null;
+      const emergencyContactName = (row.emergencyContactName || "").trim() || null;
+      const emergencyContactPhone = row.emergencyContactPhone ? String(row.emergencyContactPhone).replace(/\D/g, "") : null;
+      const healthNotes = (row.healthNotes || "").trim() || null;
+      const joinDate = parseDateSafe(row.joinDate) || new Date().toISOString().split("T")[0];
+      const isActive = row.status !== undefined 
+        ? String(row.status).trim().toLowerCase() !== "inactive" 
+        : true;
+
+      // Validate full name
+      if (!fullName) {
+        skipped.push({
+          row: rowNum,
+          name: "Unknown",
+          phone: rawPhone,
+          reason: "Full name is required",
+        });
+        continue;
+      }
+
+      // Validate phone
+      if (!cleanPhone || cleanPhone.length < 10 || cleanPhone.length > 15) {
+        skipped.push({
+          row: rowNum,
+          name: fullName,
+          phone: rawPhone,
+          reason: "Phone number must be between 10 and 15 digits",
+        });
+        continue;
+      }
+
+      // Validate email
+      if (email) {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+          skipped.push({
+            row: rowNum,
+            name: fullName,
+            phone: cleanPhone,
+            reason: `Invalid email address: ${email}`,
+          });
+          continue;
+        }
+      }
+
+      // Determine target branch
+      let targetBranch = defaultBranch;
+      if (row.branchName) {
+        const matched = branchMapByName.get(row.branchName.trim().toLowerCase());
+        if (matched) {
+          targetBranch = matched;
+        }
+      }
+
+      if (!targetBranch) {
+        skipped.push({
+          row: rowNum,
+          name: fullName,
+          phone: cleanPhone,
+          reason: "Target branch could not be determined. Please select a branch or provide a valid branch name.",
+        });
+        continue;
+      }
+
+      if (!targetBranch.is_active) {
+        skipped.push({
+          row: rowNum,
+          name: fullName,
+          phone: cleanPhone,
+          reason: `Branch "${targetBranch.name}" is inactive`,
+        });
+        continue;
+      }
+
+      // Check duplicates within the file batch
+      const batchKey = `${targetBranch.id}_${cleanPhone}`;
+      if (seenPhonesInBatch.has(batchKey)) {
+        skipped.push({
+          row: rowNum,
+          name: fullName,
+          phone: cleanPhone,
+          reason: `Duplicate phone number within this import file for branch "${targetBranch.name}"`,
+        });
+        continue;
+      }
+      seenPhonesInBatch.add(batchKey);
+
+      // Check duplicate in database for this branch
+      const existingMember = await client.query(
+        `SELECT id, full_name FROM members WHERE branch_id = $1 AND phone = $2 LIMIT 1`,
+        [targetBranch.id, cleanPhone]
+      );
+
+      if (existingMember.rows.length > 0) {
+        skipped.push({
+          row: rowNum,
+          name: fullName,
+          phone: cleanPhone,
+          reason: `Member with phone ${cleanPhone} already exists in ${targetBranch.name} (${existingMember.rows[0].full_name})`,
+        });
+        continue;
+      }
+
+      // Insert member
+      const insertResult = await client.query(
+        `
+        INSERT INTO members (
+          branch_id,
+          full_name,
+          email,
+          phone,
+          gender,
+          date_of_birth,
+          address,
+          emergency_contact_name,
+          emergency_contact_phone,
+          health_notes,
+          join_date,
+          is_active
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+        )
+        RETURNING id, full_name, phone, email, branch_id
+        `,
+        [
+          targetBranch.id,
+          fullName,
+          email,
+          cleanPhone,
+          gender,
+          dateOfBirth,
+          address,
+          emergencyContactName,
+          emergencyContactPhone,
+          healthNotes,
+          joinDate,
+          isActive,
+        ]
+      );
+
+      imported.push({
+        id: insertResult.rows[0].id,
+        name: insertResult.rows[0].full_name,
+        phone: insertResult.rows[0].phone,
+        branch: targetBranch.name,
+      });
+    }
+
+    await client.query("COMMIT");
+
+    return res.status(200).json({
+      success: true,
+      message: `Import completed: ${imported.length} imported successfully, ${skipped.length} skipped.`,
+      data: {
+        total: members.length,
+        importedCount: imported.length,
+        skippedCount: skipped.length,
+        imported,
+        skipped,
+      },
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    next(err);
+  } finally {
+    client.release();
   }
 };
 
@@ -475,17 +795,30 @@ const getMemberById = async (req, res, next) => {
         m.updated_at,
         active_plan.plan_name,
         active_plan.expiry_date,
-        active_plan.plan_id
+        active_plan.plan_id,
+        active_plan.membership_id,
+        active_plan.membership_status,
+        active_plan.freeze_start,
+        active_plan.freeze_end,
+        active_plan.max_freeze_days
       FROM members m
       LEFT JOIN branches b
         ON b.id = m.branch_id
       LEFT JOIN gyms g
         ON g.id = b.gym_id
       LEFT JOIN LATERAL (
-        SELECT mp.name as plan_name, mm.end_date as expiry_date, mm.plan_id
+        SELECT 
+          mp.name as plan_name, 
+          mm.end_date as expiry_date, 
+          mm.plan_id,
+          mm.id as membership_id,
+          mm.status as membership_status,
+          mm.freeze_start,
+          mm.freeze_end,
+          mp.max_freeze_days
         FROM member_memberships mm
         JOIN membership_plans mp ON mp.id = mm.plan_id
-        WHERE mm.member_id = m.id AND mm.status = 'active'
+        WHERE mm.member_id = m.id AND mm.status IN ('active', 'on_hold')
         ORDER BY mm.end_date DESC
         LIMIT 1
       ) active_plan ON true
@@ -953,10 +1286,259 @@ const getMemberAchievements = async (req, res, next) => {
   }
 };
 
+// ======================================================
+// HOLD MEMBER FEES (FREEZE MEMBERSHIP)
+// ======================================================
+
+const holdMemberFees = async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    const { id: memberId } = req.params;
+    const { startDate, endDate, durationDays, reason } = req.body;
+
+    // 1. Fetch active membership
+    const memRes = await client.query(
+      `
+      SELECT 
+        mm.id, mm.plan_id, mm.start_date, mm.end_date, mm.status,
+        mp.name as plan_name, mp.max_freeze_days
+      FROM member_memberships mm
+      JOIN membership_plans mp ON mp.id = mm.plan_id
+      WHERE mm.member_id = $1 AND mm.status = 'active'
+      ORDER BY mm.end_date DESC
+      LIMIT 1
+      `,
+      [memberId]
+    );
+
+    if (memRes.rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No active membership found for this member to put on hold.",
+      });
+    }
+
+    const membership = memRes.rows[0];
+
+    const formatLocalDate = (d) => {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    };
+
+    let startD = startDate ? new Date(startDate) : new Date();
+    let endD;
+    let daysToHold;
+
+    if (endDate) {
+      endD = new Date(endDate);
+      const diffMs = endD.getTime() - startD.getTime();
+      daysToHold = Math.max(1, Math.round(diffMs / (1000 * 60 * 60 * 24)));
+    } else if (durationDays) {
+      daysToHold = parseInt(durationDays, 10);
+      endD = new Date(startD);
+      endD.setDate(startD.getDate() + daysToHold);
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: "Hold end date or duration in days is required.",
+      });
+    }
+
+    const freezeStartStr = formatLocalDate(startD);
+    const freezeEndStr = formatLocalDate(endD);
+
+    // Calculate extended end date: current end_date + daysToHold
+    const curEndD = new Date(membership.end_date);
+    const newEndD = new Date(curEndD);
+    newEndD.setDate(curEndD.getDate() + daysToHold);
+    const newEndDateStr = formatLocalDate(newEndD);
+
+    await client.query("BEGIN");
+
+    const updateRes = await client.query(
+      `
+      UPDATE member_memberships
+      SET 
+        status = 'on_hold',
+        freeze_start = $1,
+        freeze_end = $2,
+        end_date = $3,
+        updated_at = NOW()
+      WHERE id = $4
+      RETURNING *
+      `,
+      [freezeStartStr, freezeEndStr, newEndDateStr, membership.id]
+    );
+
+    try {
+      await client.query(
+        `
+        INSERT INTO audit_logs (user_id, action, table_name, record_id, old_values, new_values)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        `,
+        [
+          req.user.id,
+          "HOLD_FEES",
+          "member_memberships",
+          membership.id,
+          JSON.stringify({ status: membership.status, end_date: membership.end_date }),
+          JSON.stringify({
+            status: "on_hold",
+            freeze_start: freezeStartStr,
+            freeze_end: freezeEndStr,
+            end_date: newEndDateStr,
+            reason: reason || "Membership fees placed on hold",
+          }),
+        ]
+      );
+    } catch (auditErr) {
+      // Ignore if audit logging fails
+    }
+
+    await client.query("COMMIT");
+
+    return res.status(200).json({
+      success: true,
+      message: `Membership fees placed on hold for ${daysToHold} day${daysToHold === 1 ? "" : "s"} (until ${freezeEndStr}). New expiry is ${newEndDateStr}.`,
+      data: {
+        membership: updateRes.rows[0],
+        newExpiryDate: newEndDateStr,
+        freezeStart: freezeStartStr,
+        freezeEnd: freezeEndStr,
+        daysHeld: daysToHold,
+      },
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+// ======================================================
+// RESUME MEMBER FEES (UNFREEZE MEMBERSHIP)
+// ======================================================
+
+const resumeMemberFees = async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    const { id: memberId } = req.params;
+    const { resumeDate } = req.body;
+
+    const memRes = await client.query(
+      `
+      SELECT 
+        mm.id, mm.plan_id, mm.start_date, mm.end_date, mm.status,
+        mm.freeze_start, mm.freeze_end,
+        mp.name as plan_name
+      FROM member_memberships mm
+      JOIN membership_plans mp ON mp.id = mm.plan_id
+      WHERE mm.member_id = $1 AND mm.status = 'on_hold'
+      ORDER BY mm.end_date DESC
+      LIMIT 1
+      `,
+      [memberId]
+    );
+
+    if (memRes.rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No membership currently on hold found for this member.",
+      });
+    }
+
+    const membership = memRes.rows[0];
+
+    const formatLocalDate = (d) => {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    };
+
+    const actualResumeDate = resumeDate ? new Date(resumeDate) : new Date();
+    const plannedEndFreeze = membership.freeze_end ? new Date(membership.freeze_end) : actualResumeDate;
+
+    let adjustedEndDateStr = formatLocalDate(new Date(membership.end_date));
+
+    // If resumed early (before planned freeze_end), adjust remaining unconsumed days
+    if (actualResumeDate < plannedEndFreeze) {
+      const unusedDaysMs = plannedEndFreeze.getTime() - actualResumeDate.getTime();
+      const unusedDays = Math.max(0, Math.round(unusedDaysMs / (1000 * 60 * 60 * 24)));
+      if (unusedDays > 0) {
+        const curEnd = new Date(membership.end_date);
+        curEnd.setDate(curEnd.getDate() - unusedDays);
+        adjustedEndDateStr = formatLocalDate(curEnd);
+      }
+    }
+
+    await client.query("BEGIN");
+
+    const updateRes = await client.query(
+      `
+      UPDATE member_memberships
+      SET 
+        status = 'active',
+        freeze_end = $1,
+        end_date = $2,
+        updated_at = NOW()
+      WHERE id = $3
+      RETURNING *
+      `,
+      [formatLocalDate(actualResumeDate), adjustedEndDateStr, membership.id]
+    );
+
+    try {
+      await client.query(
+        `
+        INSERT INTO audit_logs (user_id, action, table_name, record_id, old_values, new_values)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        `,
+        [
+          req.user.id,
+          "RESUME_FEES",
+          "member_memberships",
+          membership.id,
+          JSON.stringify({ status: membership.status, end_date: membership.end_date }),
+          JSON.stringify({
+            status: "active",
+            end_date: adjustedEndDateStr,
+            resumed_at: formatLocalDate(actualResumeDate),
+          }),
+        ]
+      );
+    } catch (auditErr) {
+      // Ignore
+    }
+
+    await client.query("COMMIT");
+
+    return res.status(200).json({
+      success: true,
+      message: `Membership fees resumed successfully. Plan is now active with expiry ${adjustedEndDateStr}.`,
+      data: {
+        membership: updateRes.rows[0],
+        newExpiryDate: adjustedEndDateStr,
+      },
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
 module.exports = {
   createMember,
   getMembers,
   exportMembers,
+  importMembers,
+  holdMemberFees,
+  resumeMemberFees,
   getMemberById,
   updateMember,
   deleteMember,

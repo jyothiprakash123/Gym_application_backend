@@ -11,6 +11,10 @@ const startServer = async () => {
 
     console.log("Database connection successful");
 
+    // Initialize module configs and permissions tables
+    const { initSettingsTables } = require("./services/initSettingsTables");
+    await initSettingsTables();
+
     app.listen(PORT, () => {
       console.log(
         `Server running on http://localhost:${PORT}`

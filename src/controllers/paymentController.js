@@ -107,77 +107,81 @@ const createPayment = async (req, res, next) => {
               [planId, startDate, endDate, actualMembershipId]
             );
             
-            // Update payment
-            const updatedPaymentResult = await pool.query(
-               `
-               UPDATE payments
-               SET
-                 amount = $1,
-                 payment_mode = $2,
-                 payment_ref = $3,
-                 notes = $4
-               WHERE id = $5
-               RETURNING *
-               `,
-               [amount, paymentMode || null, paymentRef || null, notes || null, paymentToday.rows[0].payment_id]
-             );
-             
-             return res.status(200).json({
-               success: true,
-               message: "Payment updated successfully",
-               data: { payment: updatedPaymentResult.rows[0] },
-             });
-          }
-          
-          // Mark prior ended memberships as expired
-          await pool.query(
-            `UPDATE member_memberships 
-             SET status = 'expired' 
-             WHERE member_id = $1 AND end_date < $2 AND status = 'active'`,
-            [memberId, startDateStr]
-          );
+              // Update payment
+              const updatedPaymentResult = await pool.query(
+                 `
+                 UPDATE payments
+                 SET
+                   amount = $1,
+                   payment_mode = $2,
+                   payment_ref = $3,
+                   notes = $4,
+                   status = $5
+                 WHERE id = $6
+                 RETURNING *
+                 `,
+                 [amount, paymentMode || null, paymentRef || null, notes || null, paymentMode === 'on_hold' ? 'on_hold' : 'completed', paymentToday.rows[0].payment_id]
+               );
+               
+               return res.status(200).json({
+                 success: true,
+                 message: "Payment updated successfully",
+                 data: { payment: updatedPaymentResult.rows[0] },
+               });
+            }
+            
+            // Mark prior ended memberships as expired
+            await pool.query(
+              `UPDATE member_memberships 
+               SET status = 'expired' 
+               WHERE member_id = $1 AND end_date < $2 AND status = 'active'`,
+              [memberId, startDateStr]
+            );
 
-          const membershipResult = await pool.query(
-            `
-            INSERT INTO member_memberships (
-              member_id, plan_id, gym_id, branch_id, start_date, end_date, status
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id
-            `,
-            [memberId, planId, gymId || null, branchId, startDateStr, endDateStr, 'active']
-          );
-          actualMembershipId = membershipResult.rows[0].id;
+            const initialMembershipStatus = paymentMode === 'on_hold' ? 'on_hold' : 'active';
+            const membershipResult = await pool.query(
+              `
+              INSERT INTO member_memberships (
+                member_id, plan_id, gym_id, branch_id, start_date, end_date, status
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id
+              `,
+              [memberId, planId, gymId || null, branchId, startDateStr, endDateStr, initialMembershipStatus]
+            );
+            actualMembershipId = membershipResult.rows[0].id;
+          }
         }
       }
-    }
 
-    const result = await pool.query(
-      `
-      INSERT INTO payments (
-        member_id,
-        membership_id,
-        gym_id,
-        branch_id,
-        amount,
-        payment_mode,
-        payment_ref,
-        notes,
-        created_by
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-      RETURNING *
-      `,
-      [
-        memberId,
-        actualMembershipId || null,
-        gymId || null,
-        branchId,
-        amount,
-        paymentMode || null,
-        paymentRef || null,
-        notes || null,
-        req.user.id
-      ]
-    );
+      const result = await pool.query(
+        `
+        INSERT INTO payments (
+          member_id,
+          membership_id,
+          gym_id,
+          branch_id,
+          amount,
+          payment_mode,
+          payment_ref,
+          notes,
+          created_by,
+          status
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING *
+        `,
+        [
+          memberId,
+          actualMembershipId || null,
+          gymId || null,
+          branchId,
+          amount,
+          paymentMode || null,
+          paymentRef || null,
+          notes || null,
+          req.user.id,
+          paymentMode === 'on_hold' ? 'on_hold' : 'completed'
+        ]
+      );
 
     // Trigger Notification Service
     try {
