@@ -16,16 +16,33 @@ const {
   resetGymPermissionsToCommon,
   getModulesConfig,
   updateModulesConfig,
-  resetGymModulesToCommon
+  resetGymModulesToCommon,
+  getRolesList,
+  createRole,
+  updateRole,
+  deleteRole,
+  getMasterConfigs,
+  updateMasterConfigs
 } = require("../controllers/settingsController");
 
 const authenticate = require("../middleware/authMiddleware");
+const authorizeRoles = require("../middleware/roleMiddleware");
 
 // Retrieve settings
 router.get("/", authenticate, getSettings);
 
 // Upsert setting
 router.post("/", authenticate, upsertSetting);
+
+// Masters System Configurations (System Admin Only)
+router.get("/masters", authenticate, getMasterConfigs);
+router.put("/masters", authenticate, authorizeRoles("system-admin"), updateMasterConfigs);
+
+// Roles CRUD (Screenshot 1 & Screenshot 2)
+router.get("/roles", authenticate, getRolesList);
+router.post("/roles", authenticate, createRole);
+router.put("/roles/:id", authenticate, updateRole);
+router.delete("/roles/:id", authenticate, deleteRole);
 
 // Granular Permissions
 router.get("/granular-permissions", authenticate, getGranularPermissions);

@@ -831,6 +831,256 @@ const resetGymModulesToCommon = async (req, res, next) => {
   }
 };
 
+// ======================================================
+// ROLES CRUD FOR SETTINGS (SCREENSHOT 1 & SCREENSHOT 2)
+// ======================================================
+
+const getRolesList = async (req, res, next) => {
+  try {
+    // Ensure helper columns exist if not already present
+    try {
+      await pool.query(`ALTER TABLE roles ADD COLUMN IF NOT EXISTS is_accountant BOOLEAN DEFAULT FALSE;`);
+      await pool.query(`ALTER TABLE roles ADD COLUMN IF NOT EXISTS is_default BOOLEAN DEFAULT FALSE;`);
+    } catch (e) {
+      // ignore if migration not supported
+    }
+
+    const result = await pool.query(`
+      SELECT id, name, description, 
+             COALESCE(is_accountant, false) as is_accountant, 
+             COALESCE(is_default, false) as is_default, 
+             created_at 
+      FROM roles 
+      ORDER BY created_at ASC
+    `);
+
+    const standardSystemRoles = ['system-admin', 'super-admin', 'admin', 'trainer', 'front-desk', 'accountant'];
+
+    const roles = result.rows.map(r => ({
+      ...r,
+      is_default: standardSystemRoles.includes(r.name?.toLowerCase()) || Boolean(r.is_default)
+    }));
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        roles
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const createRole = async (req, res, next) => {
+  try {
+    const { name, description, is_accountant, permissions } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ success: false, message: "Role name is required" });
+    }
+
+    const cleanName = name.trim();
+
+    // Check duplicate
+    const check = await pool.query(`SELECT id FROM roles WHERE LOWER(name) = LOWER($1)`, [cleanName]);
+    if (check.rows.length > 0) {
+      return res.status(409).json({ success: false, message: `Role '${cleanName}' already exists` });
+    }
+
+    const insertRes = await pool.query(
+      `INSERT INTO roles (name, description, is_accountant, is_default) VALUES ($1, $2, $3, false) RETURNING *`,
+      [cleanName, description || '', Boolean(is_accountant)]
+    );
+
+    const newRole = insertRes.rows[0];
+
+    // If permissions supplied, save them
+    if (permissions && typeof permissions === 'object') {
+      const gymId = req.user.gym_id || null;
+      for (const [permKey, allowed] of Object.entries(permissions)) {
+        await pool.query(`
+          INSERT INTO gym_role_permissions (gym_id, role_id, permission_key, is_allowed, updated_at)
+          VALUES ($1, $2, $3, $4, NOW())
+          ON CONFLICT (COALESCE(gym_id, '00000000-0000-0000-0000-000000000000'), role_id, permission_key)
+          DO UPDATE SET is_allowed = EXCLUDED.is_allowed, updated_at = NOW();
+        `, [gymId, newRole.name, permKey, Boolean(allowed)]);
+      }
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: "Role created successfully",
+      data: newRole
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const updateRole = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { name, description, is_accountant, permissions } = req.body;
+
+    const updateRes = await pool.query(
+      `UPDATE roles 
+       SET name = COALESCE($1, name), 
+           description = COALESCE($2, description),
+           is_accountant = COALESCE($3, is_accountant)
+       WHERE id = $4 RETURNING *`,
+      [name?.trim(), description, is_accountant !== undefined ? Boolean(is_accountant) : null, id]
+    );
+
+    if (updateRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Role not found" });
+    }
+
+    const updatedRole = updateRes.rows[0];
+
+    // If permissions supplied, save them
+    if (permissions && typeof permissions === 'object') {
+      const gymId = req.user.gym_id || null;
+      for (const [permKey, allowed] of Object.entries(permissions)) {
+        await pool.query(`
+          INSERT INTO gym_role_permissions (gym_id, role_id, permission_key, is_allowed, updated_at)
+          VALUES ($1, $2, $3, $4, NOW())
+          ON CONFLICT (COALESCE(gym_id, '00000000-0000-0000-0000-000000000000'), role_id, permission_key)
+          DO UPDATE SET is_allowed = EXCLUDED.is_allowed, updated_at = NOW();
+        `, [gymId, updatedRole.name, permKey, Boolean(allowed)]);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Role updated successfully",
+      data: updatedRole
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const deleteRole = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    // Check if role is in use
+    const userCheck = await pool.query(`SELECT id FROM users WHERE role_id = $1 LIMIT 1`, [id]);
+    if (userCheck.rows.length > 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Cannot delete role because it is currently assigned to users" 
+      });
+    }
+
+    // Check if default
+    const roleCheck = await pool.query(`SELECT name, is_default FROM roles WHERE id = $1`, [id]);
+    if (roleCheck.rows.length > 0 && (roleCheck.rows[0].is_default || ['admin', 'super-admin', 'system-admin'].includes(roleCheck.rows[0].name.toLowerCase()))) {
+      return res.status(400).json({
+        success: false,
+        message: "This is a default system role and cannot be deleted."
+      });
+    }
+
+    await pool.query(`DELETE FROM roles WHERE id = $1`, [id]);
+
+    return res.status(200).json({
+      success: true,
+      message: "Role deleted successfully"
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ======================================================
+// MASTERS CONFIGURATIONS (SYSTEM ADMIN ONLY)
+// ======================================================
+
+const getMasterConfigs = async (req, res, next) => {
+  try {
+    const result = await pool.query(`
+      SELECT key, value 
+      FROM settings 
+      WHERE key IN ('master_plan_sidebar_visibility', 'master_quick_navigation', 'master_dark_theme')
+        AND gym_id IS NULL
+    `);
+    
+    const configs = {
+      plan_sidebar_visibility: true,
+      quick_navigation: true,
+      dark_theme: true
+    };
+
+    result.rows.forEach(r => {
+      if (r.key === 'master_plan_sidebar_visibility') configs.plan_sidebar_visibility = r.value === 'true' || r.value === true;
+      if (r.key === 'master_quick_navigation') configs.quick_navigation = r.value === 'true' || r.value === true;
+      if (r.key === 'master_dark_theme') configs.dark_theme = r.value === 'true' || r.value === true;
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        configs
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const updateMasterConfigs = async (req, res, next) => {
+  try {
+    // Only System Admin can manage these settings
+    if (req.user?.role_name !== 'system-admin') {
+      return res.status(403).json({
+        success: false,
+        message: "Access restricted: Only System Admin can manage Masters configurations."
+      });
+    }
+
+    const { plan_sidebar_visibility, quick_navigation, dark_theme } = req.body;
+
+    const itemsToUpdate = [
+      { key: 'master_plan_sidebar_visibility', val: String(plan_sidebar_visibility !== false) },
+      { key: 'master_quick_navigation', val: String(quick_navigation !== false) },
+      { key: 'master_dark_theme', val: String(dark_theme !== false) }
+    ];
+
+    for (const item of itemsToUpdate) {
+      const exist = await pool.query(
+        `SELECT id FROM settings WHERE key = $1 AND gym_id IS NULL`,
+        [item.key]
+      );
+      if (exist.rows.length > 0) {
+        await pool.query(
+          `UPDATE settings SET value = $1, updated_at = NOW() WHERE id = $2`,
+          [item.val, exist.rows[0].id]
+        );
+      } else {
+        await pool.query(
+          `INSERT INTO settings (gym_id, key, value, updated_at) VALUES (NULL, $1, $2, NOW())`,
+          [item.key, item.val]
+        );
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Masters configurations updated successfully",
+      data: {
+        configs: {
+          plan_sidebar_visibility: plan_sidebar_visibility !== false,
+          quick_navigation: quick_navigation !== false,
+          dark_theme: dark_theme !== false
+        }
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getSidebar,
   getAllMenuItems,
@@ -841,5 +1091,11 @@ module.exports = {
   resetGymPermissionsToCommon,
   getModulesConfig,
   updateModulesConfig,
-  resetGymModulesToCommon
+  resetGymModulesToCommon,
+  getRolesList,
+  createRole,
+  updateRole,
+  deleteRole,
+  getMasterConfigs,
+  updateMasterConfigs
 };
