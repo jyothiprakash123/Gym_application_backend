@@ -14,7 +14,7 @@ const getSidebar = async (req, res, next) => {
       SELECT m.* 
       FROM menu_items m
       JOIN role_menu_items rm ON m.id = rm.menu_item_id
-      WHERE rm.role_id = $1
+      WHERE rm.role_id = $1 AND (m.is_placeholder IS NOT TRUE)
       ORDER BY m.sort_order ASC
     `;
     
@@ -65,7 +65,7 @@ const getSidebar = async (req, res, next) => {
 
 const getAllMenuItems = async (req, res, next) => {
   try {
-    const query = `SELECT * FROM menu_items ORDER BY sort_order ASC`;
+    const query = `SELECT * FROM menu_items WHERE is_placeholder IS NOT TRUE ORDER BY sort_order ASC`;
     const result = await pool.query(query);
     
     return res.status(200).json({

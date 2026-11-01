@@ -1,25 +1,38 @@
 const pool = require("../config/db");
 
+// ======================================================
+// GET DASHBOARD OVERVIEW
+// ======================================================
 exports.getOverview = async (req, res) => {
   try {
-    const { gymId, branchId } = req.query;
+    const { gymId: clientGymId, branchId: clientBranchId } = req.query;
 
-    let memberJoin = "";
-    let branchJoin = "";
-    let whereCondition = "1=1";
-    let params = [];
+    // Resolve tenant scoping: never trust client gymId for non-system-admin
+    const effectiveGymId = req.tenant?.gymId || (req.tenant?.isSystemAdmin ? clientGymId : req.user.gym_id);
+    const effectiveBranchId = req.tenant?.branchId || clientBranchId;
 
-    // Depending on what is provided, we need to join branches to filter by gymId.
-    if (branchId) {
-      whereCondition += ` AND branch_id = $${params.length + 1}`;
-      params.push(branchId);
-    } else if (gymId) {
-      // Need to join branches to get gym_id for tables that don't have gym_id natively (like members, attendance)
-      // Actually, members has branch_id, attendance has branch_id.
-      // So we can just join branches.
+    if (!effectiveGymId && !req.tenant?.isSystemAdmin) {
+      return res.status(403).json({
+        status: "error",
+        message: "You do not have permission to view dashboard data",
+      });
     }
 
-    // A helper function to build queries easily
+    // Verify branch belongs to effectiveGymId to prevent cross-tenant data leak
+    if (effectiveBranchId && effectiveGymId && !req.tenant?.isSystemAdmin) {
+      const branchValid = await pool.query(
+        "SELECT id FROM branches WHERE id = $1 AND gym_id = $2 LIMIT 1",
+        [effectiveBranchId, effectiveGymId]
+      );
+      if (branchValid.rows.length === 0) {
+        return res.status(403).json({
+          status: "error",
+          message: "You do not have access to this branch",
+        });
+      }
+    }
+
+    // A helper function to build queries easily with tenant scoping
     const buildQuery = (baseTable, countColumn = "*", extraWhere = "", dateCol = null, groupBy = null) => {
       let q = `SELECT `;
       
@@ -34,13 +47,13 @@ exports.getOverview = async (req, res) => {
       let p = [];
       let w = `WHERE 1=1 `;
       
-      if (branchId) {
+      if (effectiveBranchId) {
         w += `AND main_table.branch_id = $1 `;
-        p.push(branchId);
-      } else if (gymId) {
+        p.push(effectiveBranchId);
+      } else if (effectiveGymId) {
         q += `JOIN branches b ON b.id = main_table.branch_id `;
         w += `AND b.gym_id = $1 `;
-        p.push(gymId);
+        p.push(effectiveGymId);
       }
       
       if (extraWhere) {
@@ -53,21 +66,20 @@ exports.getOverview = async (req, res) => {
         q += `GROUP BY ${groupBy.group} ORDER BY ${groupBy.order}`;
       }
       
-      // We have to correctly interpolate parameters if we want to use pg's parameterization,
-      // but since extraWhere might have its own parameters, this can be tricky.
-      // Wait, in the original queries, no params were used except CURRENT_DATE (which is SQL).
       return { text: q, values: p };
     };
 
     const getCond = (tableAlias) => {
-      let q = ""; let w = "WHERE 1=1"; let p = [];
-      if (branchId) {
+      let q = "";
+      let w = "WHERE 1=1";
+      let p = [];
+      if (effectiveBranchId) {
         w += ` AND ${tableAlias}.branch_id = $1`;
-        p.push(branchId);
-      } else if (gymId) {
+        p.push(effectiveBranchId);
+      } else if (effectiveGymId) {
         q += ` JOIN branches b ON b.id = ${tableAlias}.branch_id`;
         w += ` AND b.gym_id = $1`;
-        p.push(gymId);
+        p.push(effectiveGymId);
       }
       return { join: q, where: w, params: p };
     };
@@ -86,8 +98,8 @@ exports.getOverview = async (req, res) => {
     const membershipsCond = getCond('main_table');
     const qMemberships = {
       text: `SELECT 
-        COUNT(*) FILTER (WHERE main_table.status = 'active' AND EXTRACT(MONTH FROM main_table.end_date) = EXTRACT(MONTH FROM CURRENT_DATE) AND EXTRACT(YEAR FROM main_table.end_date) = EXTRACT(YEAR FROM CURRENT_DATE)) as expiring_memberships,
-        COUNT(*) FILTER (WHERE main_table.status = 'expired') as expired_memberships
+        COUNT(*) FILTER (WHERE main_table.status = 'active' AND main_table.end_date >= CURRENT_DATE AND EXTRACT(MONTH FROM main_table.end_date) = EXTRACT(MONTH FROM CURRENT_DATE) AND EXTRACT(YEAR FROM main_table.end_date) = EXTRACT(YEAR FROM CURRENT_DATE)) as expiring_memberships,
+        COUNT(*) FILTER (WHERE main_table.status = 'expired' OR (main_table.status = 'active' AND main_table.end_date < CURRENT_DATE)) as expired_memberships
       FROM member_memberships main_table ${membershipsCond.join} ${membershipsCond.where}`,
       values: membershipsCond.params
     };
@@ -101,37 +113,40 @@ exports.getOverview = async (req, res) => {
       values: paymentsCond.params
     };
 
-    const qTodayCheckins = buildQuery("attendance", "*", "DATE(main_table.check_in) = CURRENT_DATE");
+    const qTodayCheckins = buildQuery(
+      "attendance",
+      "*",
+      "main_table.attendance_date = CURRENT_DATE AND main_table.status = 1"
+    );
 
-    // 9. Member Growth
+    // Member Growth
     const qMemberGrowth = buildQuery("members", "*", "main_table.created_at >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '5 months'", null, {
       select: "TO_CHAR(DATE_TRUNC('month', main_table.created_at), 'Mon') as name, COUNT(*) as members",
       group: "DATE_TRUNC('month', main_table.created_at)",
       order: "DATE_TRUNC('month', main_table.created_at) ASC"
     });
 
-    // 10. Revenue Trend
+    // Revenue Trend
     const qRevenueTrend = buildQuery("payments", "*", "main_table.status = 'completed' AND main_table.payment_date >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '5 months'", null, {
       select: "TO_CHAR(DATE_TRUNC('month', main_table.payment_date), 'Mon') as name, COALESCE(SUM(main_table.amount), 0) as revenue",
       group: "DATE_TRUNC('month', main_table.payment_date)",
       order: "DATE_TRUNC('month', main_table.payment_date) ASC"
     });
 
-    // 11. Recent Activity
+    // Recent Activity
     let pActivity = [];
     let activityBranchJoin = "";
     let activityWhere = "";
     
-    if (branchId) {
-      activityWhere = `WHERE branch_id = $1`;
-      pActivity.push(branchId);
-    } else if (gymId) {
+    if (effectiveBranchId) {
+      activityWhere = `WHERE main_table.branch_id = $1`;
+      pActivity.push(effectiveBranchId);
+    } else if (effectiveGymId) {
       activityBranchJoin = `JOIN branches b ON b.id = main_table.branch_id`;
       activityWhere = `WHERE b.gym_id = $1`;
-      pActivity.push(gymId);
+      pActivity.push(effectiveGymId);
     }
 
-    // Reconstruct recent activity
     const qRecentActivity = {
       text: `
         SELECT * FROM (
@@ -158,20 +173,16 @@ exports.getOverview = async (req, res) => {
           SELECT 
             'checkin' as type, 
             'Member check-in recorded' as text, 
-            main_table.check_in as action_time
+            COALESCE(main_table.check_in, main_table.created_at) as action_time
           FROM attendance main_table
           ${activityBranchJoin}
-          ${activityWhere}
+          ${activityWhere ? activityWhere + " AND main_table.status = 1" : "WHERE main_table.status = 1"}
         ) all_activities
         ORDER BY action_time DESC
         LIMIT 5
       `,
-      values: pActivity.length > 0 ? [pActivity[0], pActivity[0], pActivity[0]] : [] // Since we use $1 in each subquery and UNION ALL combines them, we need to pass the param 3 times or use placeholders carefully. Wait, if we use $1 in 3 different SELECTs connected by UNION ALL, we can just pass it once? No, pg driver expects $1, $1, $1 to match the single parameter provided. Yes, pg allows using $1 multiple times for the same value!
+      values: pActivity.length > 0 ? [pActivity[0]] : []
     };
-    if (pActivity.length > 0) {
-      // If we use $1 in each subquery, we can just pass [branchId] or [gymId]
-      qRecentActivity.values = [pActivity[0]];
-    }
 
     const [
       membersResult,

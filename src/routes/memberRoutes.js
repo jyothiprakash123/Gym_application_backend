@@ -152,10 +152,7 @@ router.put(
 router.delete(
   "/:id",
   authenticate,
-  authorizeRoles("system-admin", "super-admin",
-    "admin",
-    "front-desk"
-  ),
+  authorizeRoles("system-admin", "super-admin", "admin"),
   deleteMember
 );
 

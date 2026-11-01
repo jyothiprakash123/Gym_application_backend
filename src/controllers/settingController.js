@@ -40,6 +40,14 @@ const getSettings = async (req, res, next) => {
 
 const upsertSetting = async (req, res, next) => {
   try {
+    const userRole = req.user?.role_name;
+    if (userRole !== "system-admin" && userRole !== "super-admin") {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to modify settings",
+      });
+    }
+
     const { gymId, key, value } = req.body;
 
     if (!key) {

@@ -8,24 +8,12 @@ const pool = require("../config/db");
 const authenticate = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-
-    // ----------------------------------------------
-    // 1. Get token from cookies
-    // ----------------------------------------------
-
-    const accessToken = req.cookies.accessToken;
+    const accessToken = req.cookies?.accessToken || (authHeader?.startsWith("Bearer ") ? authHeader.split(" ")[1] : null);
 
     if (!accessToken) {
       return res.status(401).json({
         success: false,
         message: "Authentication required",
-      });
-    }
-
-    if (!accessToken) {
-      return res.status(401).json({
-        success: false,
-        message: "Access token is required",
       });
     }
 
@@ -84,10 +72,21 @@ const authenticate = async (req, res, next) => {
     }
 
     // ----------------------------------------------
-    // 6. Attach user to request
+    // 6. Attach user and tenant context to request
     // ----------------------------------------------
 
     req.user = user;
+
+    // Non-system-admin accounts must belong to a gym
+    if (user.role_name !== "system-admin" && !user.gym_id) {
+      return res.status(403).json({
+        success: false,
+        message: "Your account is not associated with any gym",
+      });
+    }
+
+    const { resolveTenant } = require("./tenantMiddleware");
+    req.tenant = resolveTenant(req);
 
     next();
 

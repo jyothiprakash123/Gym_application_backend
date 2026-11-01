@@ -50,11 +50,12 @@ class NotificationService {
       // we'll map message -> body, title -> type.
       await pool.query(
         `INSERT INTO notifications 
-         (id, gym_id, member_id, status, type, title, body, created_at)
-         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, NOW())`,
+         (id, gym_id, member_id, channel, status, type, title, body, created_at)
+         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, NOW())`,
         [
           gymId,
           memberId,
+          channel || 'SMS',
           status === 'SENT' ? 'read' : 'unread', 
           type,
           'SMS Notification',

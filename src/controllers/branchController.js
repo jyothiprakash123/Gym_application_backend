@@ -1,4 +1,5 @@
 const pool = require("../config/db");
+const { resolveBranchAccess, canUserAccessBranch } = require("../middleware/tenantMiddleware");
 
 // ======================================================
 // CREATE BRANCH
@@ -7,7 +8,7 @@ const pool = require("../config/db");
 const createBranch = async (req, res, next) => {
   try {
     const {
-      gymId,
+      gymId: clientGymId,
       managerId,
       name,
       address,
@@ -19,18 +20,7 @@ const createBranch = async (req, res, next) => {
     } = req.body;
 
     // ----------------------------------------------
-    // 1. Validate required fields
-    // ----------------------------------------------
-
-    if (!gymId || !name) {
-      return res.status(400).json({
-        success: false,
-        message: "gymId and name are required",
-      });
-    }
-
-    // ----------------------------------------------
-    // 2. Only Super Admin can create branches
+    // 1. Permission check
     // ----------------------------------------------
 
     if (req.user.role_name !== "system-admin" && req.user.role_name !== "super-admin") {
@@ -41,20 +31,31 @@ const createBranch = async (req, res, next) => {
     }
 
     // ----------------------------------------------
-    // 3. Verify gym exists
+    // 2. Resolve & Force Tenant Gym ID
+    // ----------------------------------------------
+
+    // Super-admin MUST use their own gym_id, never trust client-sent gymId
+    const effectiveGymId = req.tenant?.gymId || (req.tenant?.isSystemAdmin ? clientGymId : req.user.gym_id);
+
+    if (!effectiveGymId || !name) {
+      return res.status(400).json({
+        success: false,
+        message: "gymId and name are required",
+      });
+    }
+
+    // ----------------------------------------------
+    // 3. Verify gym exists and is active
     // ----------------------------------------------
 
     const gymResult = await pool.query(
       `
-      SELECT
-        id,
-        name,
-        is_active
+      SELECT id, name, is_active
       FROM gyms
       WHERE id = $1
       LIMIT 1
       `,
-      [gymId]
+      [effectiveGymId]
     );
 
     if (gymResult.rows.length === 0) {
@@ -84,6 +85,7 @@ const createBranch = async (req, res, next) => {
           u.id,
           u.full_name,
           u.is_active,
+          u.gym_id,
           r.name AS role_name
         FROM users u
         LEFT JOIN roles r
@@ -102,6 +104,13 @@ const createBranch = async (req, res, next) => {
       }
 
       const manager = managerResult.rows[0];
+
+      if (manager.gym_id && effectiveGymId && manager.gym_id !== effectiveGymId) {
+        return res.status(403).json({
+          success: false,
+          message: "Manager belongs to another gym",
+        });
+      }
 
       if (!manager.is_active) {
         return res.status(400).json({
@@ -155,7 +164,7 @@ const createBranch = async (req, res, next) => {
         updated_at
       `,
       [
-        gymId,
+        effectiveGymId,
         managerId || null,
         name.trim(),
         address || null,
@@ -196,25 +205,28 @@ const getBranches = async (req, res, next) => {
     let dataParams = [];
     let conditions = [];
 
-    // Base Condition: Role Access
-    if (req.user.role_name === "admin") {
-      conditions.push(`b.manager_id = $${countParams.length + 1}`);
-      countParams.push(req.user.id);
-      dataParams.push(req.user.id);
-    } else if (req.user.role_name === "super-admin") {
-      // Super admin only sees branches of their gym
+    // Tenant Gym Isolation
+    if (req.tenant?.gymId) {
       conditions.push(`b.gym_id = $${countParams.length + 1}`);
-      countParams.push(req.user.gym_id);
-      dataParams.push(req.user.gym_id);
-    } else if (req.user.role_name !== "system-admin") {
+      countParams.push(req.tenant.gymId);
+      dataParams.push(req.tenant.gymId);
+    } else if (!req.tenant?.isSystemAdmin) {
       return res.status(403).json({
         success: false,
         message: "You do not have permission to view branches",
       });
     }
 
+    // Shared branch-access helper (Day 2 Prompt 2)
+    const branchAccess = resolveBranchAccess(req);
+    if (branchAccess.type === "BRANCH" && branchAccess.branchId) {
+      conditions.push(`b.id = $${countParams.length + 1}`);
+      countParams.push(branchAccess.branchId);
+      dataParams.push(branchAccess.branchId);
+    }
+
     // Gym Filter Condition for system-admin
-    if (req.user.role_name === "system-admin" && gymId) {
+    if (req.tenant?.isSystemAdmin && gymId) {
       conditions.push(`b.gym_id = $${countParams.length + 1}`);
       countParams.push(gymId);
       dataParams.push(gymId);
@@ -291,60 +303,46 @@ const getBranchById = async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    let query;
-    let params;
+    let query = `
+      SELECT
+        b.id,
+        b.gym_id,
+        b.manager_id,
+        b.name,
+        b.address,
+        b.city,
+        b.phone,
+        b.email,
+        b.opening_time,
+        b.closing_time,
+        b.is_active,
+        b.created_at,
+        b.updated_at,
+        g.name as gym_name
+      FROM branches b
+      LEFT JOIN gyms g ON g.id = b.gym_id
+      WHERE b.id = $1
+    `;
+    const params = [id];
 
-    if ((req.user.role_name === "system-admin" || req.user.role_name === "super-admin")) {
-      query = `
-        SELECT
-          id,
-          gym_id,
-          manager_id,
-          name,
-          address,
-          city,
-          phone,
-          email,
-          opening_time,
-          closing_time,
-          is_active,
-          created_at,
-          updated_at
-        FROM branches
-        WHERE id = $1
-        LIMIT 1
-      `;
-
-      params = [id];
-    } else if (req.user.role_name === "admin") {
-      query = `
-        SELECT
-          id,
-          gym_id,
-          manager_id,
-          name,
-          address,
-          city,
-          phone,
-          email,
-          opening_time,
-          closing_time,
-          is_active,
-          created_at,
-          updated_at
-        FROM branches
-        WHERE id = $1
-          AND manager_id = $2
-        LIMIT 1
-      `;
-
-      params = [id, req.user.id];
-    } else {
+    if (req.tenant?.gymId) {
+      params.push(req.tenant.gymId);
+      query += ` AND b.gym_id = $${params.length}`;
+    } else if (!req.tenant?.isSystemAdmin) {
       return res.status(403).json({
         success: false,
-        message: "You do not have permission to view this branch",
+        message: "You do not have permission to view branches",
       });
     }
+
+    // Shared branch-access helper (Day 2 Prompt 2)
+    const branchAccess = resolveBranchAccess(req);
+    if (branchAccess.type === "BRANCH" && branchAccess.branchId) {
+      params.push(branchAccess.branchId);
+      query += ` AND b.id = $${params.length}`;
+    }
+
+    query += ` LIMIT 1`;
 
     const result = await pool.query(query, params);
 
@@ -387,41 +385,17 @@ const updateBranch = async (req, res, next) => {
     } = req.body;
 
     // ----------------------------------------------
-    // Find branch with access control
+    // Find branch with tenant access control
     // ----------------------------------------------
 
-    let branchQuery;
-    let branchParams;
-
-    if ((req.user.role_name === "system-admin" || req.user.role_name === "super-admin")) {
-      branchQuery = `
-        SELECT id, gym_id
-        FROM branches
-        WHERE id = $1
-        LIMIT 1
-      `;
-
-      branchParams = [id];
-    } else if (req.user.role_name === "admin") {
-      branchQuery = `
-        SELECT id, gym_id
-        FROM branches
-        WHERE id = $1
-          AND manager_id = $2
-        LIMIT 1
-      `;
-
-      branchParams = [id, req.user.id];
-    } else {
-      return res.status(403).json({
-        success: false,
-        message: "You do not have permission to update branches",
-      });
-    }
-
     const branchResult = await pool.query(
-      branchQuery,
-      branchParams
+      `
+      SELECT id, gym_id, manager_id
+      FROM branches
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [id]
     );
 
     if (branchResult.rows.length === 0) {
@@ -432,6 +406,29 @@ const updateBranch = async (req, res, next) => {
     }
 
     const branch = branchResult.rows[0];
+
+    // Tenant Gym Isolation
+    if (req.tenant?.gymId && branch.gym_id !== req.tenant.gymId) {
+      return res.status(404).json({
+        success: false,
+        message: "Branch not found",
+      });
+    }
+
+    // Role scoping using shared branch-access helper (Day 2 Prompt 2)
+    if (req.user.role_name !== "system-admin" && req.user.role_name !== "super-admin" && req.user.role_name !== "admin") {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to update branches",
+      });
+    }
+
+    if (!canUserAccessBranch(req.user, branch)) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to update this branch",
+      });
+    }
 
     // ----------------------------------------------
     // Only Super Admin can change manager
@@ -456,6 +453,7 @@ const updateBranch = async (req, res, next) => {
         `
         SELECT
           u.id,
+          u.gym_id,
           u.is_active,
           r.name AS role_name
         FROM users u
@@ -475,6 +473,13 @@ const updateBranch = async (req, res, next) => {
       }
 
       const manager = managerResult.rows[0];
+
+      if (manager.gym_id && branch.gym_id && manager.gym_id !== branch.gym_id) {
+        return res.status(403).json({
+          success: false,
+          message: "Manager belongs to another gym",
+        });
+      }
 
       if (manager.role_name !== "admin") {
         return res.status(400).json({
@@ -566,6 +571,18 @@ const deleteBranch = async (req, res, next) => {
       });
     }
 
+    // Check branch existence and tenant ownership
+    const branchCheck = await pool.query(`SELECT id, gym_id FROM branches WHERE id = $1 LIMIT 1`, [id]);
+    if (
+      branchCheck.rows.length === 0 ||
+      (req.tenant?.gymId && branchCheck.rows[0].gym_id !== req.tenant.gymId)
+    ) {
+      return res.status(404).json({
+        success: false,
+        message: "Branch not found",
+      });
+    }
+
     const result = await pool.query(
       `
       UPDATE branches
@@ -583,13 +600,6 @@ const deleteBranch = async (req, res, next) => {
       `,
       [id]
     );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Branch not found",
-      });
-    }
 
     return res.status(200).json({
       success: true,
@@ -611,22 +621,22 @@ const hardDeleteBranch = async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    // Check permissions
-    if (req.user.role_name === "admin") {
-      const branchCheck = await pool.query(
-        "SELECT id FROM branches WHERE id = $1 AND manager_id = $2",
-        [id, req.user.id]
-      );
-      if (branchCheck.rows.length === 0) {
-        return res.status(403).json({
-          success: false,
-          message: "You do not have permission to delete this branch",
-        });
-      }
-    } else if (req.user.role_name !== "system-admin" && req.user.role_name !== "super-admin") {
+    if (req.user.role_name !== "system-admin" && req.user.role_name !== "super-admin") {
       return res.status(403).json({
         success: false,
         message: "You do not have permission to delete branches",
+      });
+    }
+
+    // Check branch existence and tenant ownership
+    const branchCheck = await pool.query(`SELECT id, gym_id FROM branches WHERE id = $1 LIMIT 1`, [id]);
+    if (
+      branchCheck.rows.length === 0 ||
+      (req.tenant?.gymId && branchCheck.rows[0].gym_id !== req.tenant.gymId)
+    ) {
+      return res.status(404).json({
+        success: false,
+        message: "Branch not found",
       });
     }
 
@@ -638,13 +648,6 @@ const hardDeleteBranch = async (req, res, next) => {
       `,
       [id]
     );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Branch not found",
-      });
-    }
 
     return res.status(200).json({
       success: true,

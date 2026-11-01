@@ -19,6 +19,7 @@ const leadRoutes = require("./routes/leadRoutes");
 const expenseRoutes = require("./routes/expenseRoutes");
 const billingPlanRoutes = require("./routes/billingPlanRoutes");
 const messageRoutes = require("./routes/messageRoutes");
+const invoiceRoutes = require("./routes/invoiceRoutes");
 
 const authenticate = require("./middleware/authMiddleware");
 const authorizeRoles = require("./middleware/roleMiddleware");
@@ -85,6 +86,7 @@ app.use("/api/staff", staffRoutes);
 app.use("/api/attendance", attendanceRoutes);
 app.use("/api/plans", planRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/invoices", invoiceRoutes);
 app.use("/api/settings", settingRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/dashboard", dashboardRoutes);

@@ -1,8 +1,21 @@
 const pool = require("../config/db");
+const { resolveBranchAccess } = require("../middleware/tenantMiddleware");
 
-// Get all expenses (with pagination, search, sort, and role-based filtering)
-exports.getExpenses = async (req, res) => {
+const ALLOWED_EXPENSE_ROLES = ["system-admin", "super-admin", "admin", "accountant"];
+
+// ======================================================
+// GET EXPENSES
+// ======================================================
+exports.getExpenses = async (req, res, next) => {
   try {
+    const userRole = req.user?.role_name;
+    if (!ALLOWED_EXPENSE_ROLES.includes(userRole)) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to view expenses",
+      });
+    }
+
     const { 
       page = 1, 
       limit = 10, 
@@ -26,27 +39,35 @@ exports.getExpenses = async (req, res) => {
     const queryParams = [];
     const countParams = [];
 
-    // Role-based filtering
-    if (req.user.role_name === "admin") {
-      conditions.push(`g.id = $${countParams.length + 1}`);
-      countParams.push(req.user.gym_id);
-      queryParams.push(req.user.gym_id);
-    } else if (["trainer", "front-desk", "accountant"].includes(req.user.role_name)) {
-      conditions.push(`e.branch_id = $${countParams.length + 1}`);
-      countParams.push(req.user.branch_id);
-      queryParams.push(req.user.branch_id);
+    // Tenant Gym Isolation
+    if (req.tenant?.gymId) {
+      conditions.push(`b.gym_id = $${countParams.length + 1}`);
+      countParams.push(req.tenant.gymId);
+      queryParams.push(req.tenant.gymId);
+    } else if (!req.tenant?.isSystemAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to view expenses",
+      });
     }
 
-    // Explicit query filters from UI (for super-admin and admin)
-    if (gymId) {
-      conditions.push(`g.id = $${countParams.length + 1}`);
-      countParams.push(gymId);
-      queryParams.push(gymId);
+    // Shared branch-access helper (Day 2 Prompt 2)
+    const branchAccess = resolveBranchAccess(req);
+    if (branchAccess.type === "BRANCH" && branchAccess.branchId) {
+      conditions.push(`e.branch_id = $${countParams.length + 1}`);
+      countParams.push(branchAccess.branchId);
+      queryParams.push(branchAccess.branchId);
     }
-    if (branchId) {
+
+    // Query filters
+    if (branchId && branchAccess.type !== "BRANCH") {
       conditions.push(`e.branch_id = $${countParams.length + 1}`);
       countParams.push(branchId);
       queryParams.push(branchId);
+    } else if (gymId && req.tenant?.isSystemAdmin) {
+      conditions.push(`b.gym_id = $${countParams.length + 1}`);
+      countParams.push(gymId);
+      queryParams.push(gymId);
     }
 
     if (search) {
@@ -88,9 +109,9 @@ exports.getExpenses = async (req, res) => {
     const result = await pool.query(dataQuery, queryParams);
 
     // Sum calculation for metrics
-    let sumQuery = `SELECT SUM(amount) as total_amount ${baseQuery}`;
+    let sumQuery = `SELECT SUM(e.amount) as total_amount ${baseQuery}`;
     const sumResult = await pool.query(sumQuery, countParams);
-    const totalAmount = parseFloat(sumResult.rows[0].total_amount || 0);
+    const totalAmount = parseFloat(sumResult.rows[0]?.total_amount || 0);
 
     return res.status(200).json({
       success: true,
@@ -101,7 +122,9 @@ exports.getExpenses = async (req, res) => {
         },
         pagination: {
           totalItems: total,
+          total,
           page: parseInt(page, 10),
+          currentPage: parseInt(page, 10),
           limit: parseInt(limit, 10),
           totalPages: Math.ceil(total / limit)
         }
@@ -114,15 +137,42 @@ exports.getExpenses = async (req, res) => {
   }
 };
 
-// Create Expense
-exports.createExpense = async (req, res) => {
+// ======================================================
+// CREATE EXPENSE
+// ======================================================
+exports.createExpense = async (req, res, next) => {
   try {
+    const userRole = req.user?.role_name;
+    if (!ALLOWED_EXPENSE_ROLES.includes(userRole)) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to manage expenses",
+      });
+    }
+
     const { branch_id, expense_date, amount, category, description, receipt_url } = req.body;
     const added_by = req.user.id;
 
-    // Validate branch_id
     if (!branch_id) {
       return res.status(400).json({ success: false, message: "Branch ID is required" });
+    }
+
+    if (amount === undefined || amount === null) {
+      return res.status(400).json({ success: false, message: "Amount is required" });
+    }
+
+    // Validate branch ownership
+    const branchRes = await pool.query(`SELECT id, gym_id FROM branches WHERE id = $1 LIMIT 1`, [branch_id]);
+    if (branchRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Branch not found" });
+    }
+
+    if (req.tenant?.gymId && branchRes.rows[0].gym_id !== req.tenant.gymId) {
+      return res.status(403).json({ success: false, message: "You do not have access to this branch" });
+    }
+
+    if (req.tenant?.branchId && req.tenant.branchId !== branch_id) {
+      return res.status(403).json({ success: false, message: "You do not have access to this branch" });
     }
 
     const result = await pool.query(
@@ -142,15 +192,53 @@ exports.createExpense = async (req, res) => {
   }
 };
 
-// Update Expense
-exports.updateExpense = async (req, res) => {
+// ======================================================
+// UPDATE EXPENSE
+// ======================================================
+exports.updateExpense = async (req, res, next) => {
   try {
+    const userRole = req.user?.role_name;
+    if (!ALLOWED_EXPENSE_ROLES.includes(userRole)) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to manage expenses",
+      });
+    }
+
     const { id } = req.params;
     const { branch_id, expense_date, amount, category, description, receipt_url } = req.body;
 
-    const existing = await pool.query("SELECT * FROM expenses WHERE id = $1", [id]);
+    const existing = await pool.query(
+      `SELECT e.*, b.gym_id 
+       FROM expenses e 
+       JOIN branches b ON b.id = e.branch_id 
+       WHERE e.id = $1 LIMIT 1`,
+      [id]
+    );
+
     if (existing.rows.length === 0) {
       return res.status(404).json({ success: false, message: "Expense not found" });
+    }
+
+    const expense = existing.rows[0];
+
+    // Tenant Gym Isolation
+    if (req.tenant?.gymId && expense.gym_id !== req.tenant.gymId) {
+      return res.status(404).json({ success: false, message: "Expense not found" });
+    }
+
+    if (req.tenant?.branchId && expense.branch_id !== req.tenant.branchId) {
+      return res.status(403).json({ success: false, message: "You do not have access to this expense" });
+    }
+
+    if (branch_id) {
+      const branchRes = await pool.query(`SELECT id, gym_id FROM branches WHERE id = $1 LIMIT 1`, [branch_id]);
+      if (branchRes.rows.length === 0) {
+        return res.status(404).json({ success: false, message: "Branch not found" });
+      }
+      if (req.tenant?.gymId && branchRes.rows[0].gym_id !== req.tenant.gymId) {
+        return res.status(403).json({ success: false, message: "Branch does not belong to your gym" });
+      }
     }
 
     const result = await pool.query(
@@ -158,12 +246,12 @@ exports.updateExpense = async (req, res) => {
        SET branch_id = $1, expense_date = $2, amount = $3, category = $4, description = $5, receipt_url = $6
        WHERE id = $7 RETURNING *`,
       [
-        branch_id || existing.rows[0].branch_id,
-        expense_date || existing.rows[0].expense_date,
-        amount !== undefined ? amount : existing.rows[0].amount,
-        category || existing.rows[0].category,
-        description || existing.rows[0].description,
-        receipt_url !== undefined ? receipt_url : existing.rows[0].receipt_url,
+        branch_id || expense.branch_id,
+        expense_date || expense.expense_date,
+        amount !== undefined ? amount : expense.amount,
+        category || expense.category,
+        description || expense.description,
+        receipt_url !== undefined ? receipt_url : expense.receipt_url,
         id
       ]
     );
@@ -179,14 +267,42 @@ exports.updateExpense = async (req, res) => {
   }
 };
 
-// Delete Expense
-exports.deleteExpense = async (req, res) => {
+// ======================================================
+// DELETE EXPENSE
+// ======================================================
+exports.deleteExpense = async (req, res, next) => {
   try {
+    const userRole = req.user?.role_name;
+    if (!ALLOWED_EXPENSE_ROLES.includes(userRole)) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to manage expenses",
+      });
+    }
+
     const { id } = req.params;
     
-    const existing = await pool.query("SELECT * FROM expenses WHERE id = $1", [id]);
+    const existing = await pool.query(
+      `SELECT e.*, b.gym_id 
+       FROM expenses e 
+       JOIN branches b ON b.id = e.branch_id 
+       WHERE e.id = $1 LIMIT 1`,
+      [id]
+    );
+
     if (existing.rows.length === 0) {
       return res.status(404).json({ success: false, message: "Expense not found" });
+    }
+
+    const expense = existing.rows[0];
+
+    // Tenant Gym Isolation
+    if (req.tenant?.gymId && expense.gym_id !== req.tenant.gymId) {
+      return res.status(404).json({ success: false, message: "Expense not found" });
+    }
+
+    if (req.tenant?.branchId && expense.branch_id !== req.tenant.branchId) {
+      return res.status(403).json({ success: false, message: "You do not have access to this expense" });
     }
 
     await pool.query("DELETE FROM expenses WHERE id = $1", [id]);

@@ -1,4 +1,6 @@
 const pool = require("../config/db");
+const { resolveBranchAccess } = require("../middleware/tenantMiddleware");
+const { sanitizePhone, isValidPhone } = require("../utils/phoneValidation");
 
 // ======================================================
 // CREATE STAFF
@@ -16,18 +18,34 @@ const createStaff = async (req, res, next) => {
       joiningDate,
     } = req.body;
 
-    if (!branchId || !fullName || !phone) {
+    if (!branchId || !fullName || !fullName.trim() || !phone) {
       return res.status(400).json({
         success: false,
         message: "Branch, full name and phone are required",
       });
     }
 
-    const cleanPhone = String(phone).replace(/\D/g, "");
-    if (!cleanPhone || cleanPhone.length < 10 || cleanPhone.length > 15) {
+    if (salary !== undefined && salary !== null && salary !== "") {
+      const numSalary = Number(salary);
+      if (isNaN(numSalary) || numSalary < 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Salary cannot be negative",
+        });
+      }
+    }
+
+    const cleanPhone = sanitizePhone(phone);
+    if (!cleanPhone || cleanPhone.length !== 10) {
       return res.status(400).json({
         success: false,
-        message: "Phone number must be between 10 and 15 digits",
+        message: "Phone number must be exactly 10 digits",
+      });
+    }
+    if (!isValidPhone(cleanPhone)) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number must be a valid 10-digit mobile number starting with 6, 7, 8, or 9",
       });
     }
 
@@ -41,6 +59,7 @@ const createStaff = async (req, res, next) => {
       }
     }
 
+    // 1. Validate branch ownership
     const branchResult = await pool.query(
       `
       SELECT
@@ -61,10 +80,45 @@ const createStaff = async (req, res, next) => {
       });
     }
 
+    const branchGymId = branchResult.rows[0].gym_id;
+
+    if (req.tenant?.gymId && branchGymId !== req.tenant.gymId) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have access to this branch",
+      });
+    }
+
+    if (req.tenant?.branchId && req.tenant.branchId !== branchId) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have access to this branch",
+      });
+    }
+
     if (!branchResult.rows[0].is_active) {
       return res.status(400).json({
         success: false,
         message: "Cannot create staff in an inactive branch",
+      });
+    }
+
+    // Reject duplicate phone numbers inside the same gym
+    const dupStaff = await pool.query(
+      `
+      SELECT s.id
+      FROM staff s
+      JOIN branches b ON b.id = s.branch_id
+      WHERE b.gym_id = $1 AND s.phone = $2
+      LIMIT 1
+      `,
+      [branchGymId, cleanPhone]
+    );
+
+    if (dupStaff.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "A staff member with this phone number already exists in this gym",
       });
     }
 
@@ -101,7 +155,7 @@ const createStaff = async (req, res, next) => {
         branchId,
         fullName.trim(),
         email?.trim().toLowerCase() || null,
-        phone.trim(),
+        cleanPhone,
         designation?.trim() || null,
         salary || null,
         joiningDate || null,
@@ -136,30 +190,34 @@ const getStaff = async (req, res, next) => {
     let dataParams = [];
     let conditions = [];
 
-    // Role-based access control
-    // Super-admin sees all staff.
-    // Admin sees staff of branches they manage.
-    if (req.user.role_name === "admin") {
-      conditions.push(`b.manager_id = $${countParams.length + 1}`);
-      countParams.push(req.user.id);
-      dataParams.push(req.user.id);
-    } else if (req.user.role_name !== "system-admin" && req.user.role_name !== "super-admin") {
+    // Tenant Gym Isolation
+    if (req.tenant?.gymId) {
+      conditions.push(`b.gym_id = $${countParams.length + 1}`);
+      countParams.push(req.tenant.gymId);
+      dataParams.push(req.tenant.gymId);
+    } else if (!req.tenant?.isSystemAdmin) {
       return res.status(403).json({
         success: false,
         message: "You do not have permission to view staff",
       });
     }
 
-    if (req.query.gymId) {
+    // Shared branch-access helper (Day 2 Prompt 2)
+    const branchAccess = resolveBranchAccess(req);
+    if (branchAccess.type === "BRANCH" && branchAccess.branchId) {
+      conditions.push(`s.branch_id = $${countParams.length + 1}`);
+      countParams.push(branchAccess.branchId);
+      dataParams.push(branchAccess.branchId);
+    }
+
+    if (req.query.branchId && branchAccess.type !== "BRANCH") {
+      conditions.push(`s.branch_id = $${countParams.length + 1}`);
+      countParams.push(req.query.branchId);
+      dataParams.push(req.query.branchId);
+    } else if (req.query.gymId && req.tenant?.isSystemAdmin) {
       conditions.push(`b.gym_id = $${countParams.length + 1}`);
       countParams.push(req.query.gymId);
       dataParams.push(req.query.gymId);
-    }
-
-    if (req.query.branchId) {
-      conditions.push(`b.id = $${countParams.length + 1}`);
-      countParams.push(req.query.branchId);
-      dataParams.push(req.query.branchId);
     }
 
     // Search Condition
@@ -235,13 +293,13 @@ const getStaffById = async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    const result = await pool.query(
-      `
+    let query = `
       SELECT
         s.id,
         s.branch_id,
         b.name AS branch_name,
         b.gym_id,
+        g.name AS gym_name,
         s.user_id,
         s.role_id,
         s.full_name,
@@ -256,11 +314,32 @@ const getStaffById = async (req, res, next) => {
       FROM staff s
       LEFT JOIN branches b
         ON b.id = s.branch_id
+      LEFT JOIN gyms g
+        ON g.id = b.gym_id
       WHERE s.id = $1
-      LIMIT 1
-      `,
-      [id]
-    );
+    `;
+    const params = [id];
+
+    if (req.tenant?.gymId) {
+      params.push(req.tenant.gymId);
+      query += ` AND b.gym_id = $${params.length}`;
+    } else if (!req.tenant?.isSystemAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to view staff",
+      });
+    }
+
+    // Shared branch-access helper (Day 2 Prompt 2)
+    const branchAccess = resolveBranchAccess(req);
+    if (branchAccess.type === "BRANCH" && branchAccess.branchId) {
+      params.push(branchAccess.branchId);
+      query += ` AND s.branch_id = $${params.length}`;
+    }
+
+    query += ` LIMIT 1`;
+
+    const result = await pool.query(query, params);
 
     if (result.rows.length === 0) {
       return res.status(404).json({
@@ -299,32 +378,62 @@ const updateStaff = async (req, res, next) => {
       isActive,
     } = req.body;
 
-    // Check staff
-    const staffResult = await pool.query(
+    // Check staff existence and gym ownership
+    const staffCheck = await pool.query(
       `
       SELECT
-        id,
-        branch_id
-      FROM staff
-      WHERE id = $1
+        s.id,
+        s.branch_id,
+        b.gym_id
+      FROM staff s
+      JOIN branches b ON b.id = s.branch_id
+      WHERE s.id = $1
       LIMIT 1
       `,
       [id]
     );
 
-    if (staffResult.rows.length === 0) {
+    if (
+      staffCheck.rows.length === 0 ||
+      (req.tenant?.gymId && staffCheck.rows[0].gym_id !== req.tenant.gymId)
+    ) {
       return res.status(404).json({
         success: false,
         message: "Staff not found",
       });
     }
 
+    if (fullName !== undefined && (!fullName || !fullName.trim())) {
+      return res.status(400).json({
+        success: false,
+        message: "Full name is required",
+      });
+    }
+
+    if (salary !== undefined && salary !== null && salary !== "") {
+      const numSalary = Number(salary);
+      if (isNaN(numSalary) || numSalary < 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Salary cannot be negative",
+        });
+      }
+    }
+
+    if (req.tenant?.branchId && staffCheck.rows[0].branch_id !== req.tenant.branchId) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to update this staff member",
+      });
+    }
+
     // Validate new branch if provided
-    if (branchId !== undefined) {
+    if (branchId !== undefined && branchId !== null) {
       const branchResult = await pool.query(
         `
         SELECT
           id,
+          gym_id,
           is_active
         FROM branches
         WHERE id = $1
@@ -340,6 +449,20 @@ const updateStaff = async (req, res, next) => {
         });
       }
 
+      if (req.tenant?.gymId && branchResult.rows[0].gym_id !== req.tenant.gymId) {
+        return res.status(403).json({
+          success: false,
+          message: "Target branch belongs to another gym",
+        });
+      }
+
+      if (req.tenant?.branchId && req.tenant.branchId !== branchId) {
+        return res.status(403).json({
+          success: false,
+          message: "You do not have access to this branch",
+        });
+      }
+
       if (!branchResult.rows[0].is_active) {
         return res.status(400).json({
           success: false,
@@ -348,13 +471,44 @@ const updateStaff = async (req, res, next) => {
       }
     }
 
-    if (phone !== undefined) {
-      const cleanPhone = String(phone).replace(/\D/g, "");
-      if (!cleanPhone || cleanPhone.length < 10 || cleanPhone.length > 15) {
+    let cleanPhone = undefined;
+    if (phone !== undefined && phone !== null) {
+      cleanPhone = sanitizePhone(phone);
+      if (!cleanPhone || cleanPhone.length !== 10) {
         return res.status(400).json({
           success: false,
-          message: "Phone number must be between 10 and 15 digits",
+          message: "Phone number must be exactly 10 digits",
         });
+      }
+      if (!isValidPhone(cleanPhone)) {
+        return res.status(400).json({
+          success: false,
+          message: "Phone number must be a valid 10-digit mobile number starting with 6, 7, 8, or 9",
+        });
+      }
+
+      const targetGymId = (branchId !== undefined && branchId !== null && branchId !== staffCheck.rows[0].branch_id)
+        ? (await pool.query("SELECT gym_id FROM branches WHERE id = $1", [branchId])).rows[0]?.gym_id
+        : staffCheck.rows[0].gym_id;
+
+      if (targetGymId) {
+        const dupStaff = await pool.query(
+          `
+          SELECT s.id
+          FROM staff s
+          JOIN branches b ON b.id = s.branch_id
+          WHERE b.gym_id = $1 AND s.phone = $2 AND s.id != $3
+          LIMIT 1
+          `,
+          [targetGymId, cleanPhone, id]
+        );
+
+        if (dupStaff.rows.length > 0) {
+          return res.status(400).json({
+            success: false,
+            message: "A staff member with this phone number already exists in this gym",
+          });
+        }
       }
     }
 
@@ -402,7 +556,7 @@ const updateStaff = async (req, res, next) => {
         branchId ?? null,
         fullName?.trim() || null,
         email?.trim().toLowerCase() || null,
-        phone?.trim() || null,
+        cleanPhone !== undefined ? cleanPhone : null,
         designation?.trim() || null,
         salary ?? null,
         joiningDate ?? null,
@@ -431,6 +585,34 @@ const deleteStaff = async (req, res, next) => {
   try {
     const { id } = req.params;
 
+    // Check staff existence and gym ownership
+    const staffCheck = await pool.query(
+      `
+      SELECT s.id, b.gym_id, s.branch_id 
+      FROM staff s 
+      JOIN branches b ON b.id = s.branch_id 
+      WHERE s.id = $1 LIMIT 1
+      `,
+      [id]
+    );
+
+    if (
+      staffCheck.rows.length === 0 ||
+      (req.tenant?.gymId && staffCheck.rows[0].gym_id !== req.tenant.gymId)
+    ) {
+      return res.status(404).json({
+        success: false,
+        message: "Staff not found",
+      });
+    }
+
+    if (req.tenant?.branchId && staffCheck.rows[0].branch_id !== req.tenant.branchId) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to deactivate this staff member",
+      });
+    }
+
     const result = await pool.query(
       `
       UPDATE staff
@@ -449,13 +631,6 @@ const deleteStaff = async (req, res, next) => {
       `,
       [id]
     );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Staff not found",
-      });
-    }
 
     return res.status(200).json({
       success: true,
@@ -477,27 +652,31 @@ const hardDeleteStaff = async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    // Check permissions
-    if (req.user.role_name === "admin") {
-      const branchCheck = await pool.query(
-        `
-        SELECT s.id 
-        FROM staff s
-        JOIN branches b ON b.id = s.branch_id
-        WHERE s.id = $1 AND b.manager_id = $2
-        `,
-        [id, req.user.id]
-      );
-      if (branchCheck.rows.length === 0) {
-        return res.status(403).json({
-          success: false,
-          message: "You do not have permission to delete this staff",
-        });
-      }
-    } else if (req.user.role_name !== "system-admin" && req.user.role_name !== "super-admin") {
+    if (req.user.role_name !== "system-admin" && req.user.role_name !== "super-admin") {
       return res.status(403).json({
         success: false,
         message: "You do not have permission to delete staff",
+      });
+    }
+
+    // Check staff existence and gym ownership
+    const staffCheck = await pool.query(
+      `
+      SELECT s.id, b.gym_id 
+      FROM staff s 
+      JOIN branches b ON b.id = s.branch_id 
+      WHERE s.id = $1 LIMIT 1
+      `,
+      [id]
+    );
+
+    if (
+      staffCheck.rows.length === 0 ||
+      (req.tenant?.gymId && staffCheck.rows[0].gym_id !== req.tenant.gymId)
+    ) {
+      return res.status(404).json({
+        success: false,
+        message: "Staff not found",
       });
     }
 
@@ -509,13 +688,6 @@ const hardDeleteStaff = async (req, res, next) => {
       `,
       [id]
     );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Staff not found",
-      });
-    }
 
     return res.status(200).json({
       success: true,

@@ -31,33 +31,33 @@ const authorizeRoles = require("../middleware/roleMiddleware");
 // Retrieve settings
 router.get("/", authenticate, getSettings);
 
-// Upsert setting
-router.post("/", authenticate, upsertSetting);
+// Upsert setting (system-admin and super-admin only)
+router.post("/", authenticate, authorizeRoles("system-admin", "super-admin"), upsertSetting);
 
 // Masters System Configurations (System Admin Only)
-router.get("/masters", authenticate, getMasterConfigs);
+router.get("/masters", authenticate, authorizeRoles("system-admin"), getMasterConfigs);
 router.put("/masters", authenticate, authorizeRoles("system-admin"), updateMasterConfigs);
 
-// Roles CRUD (Screenshot 1 & Screenshot 2)
-router.get("/roles", authenticate, getRolesList);
-router.post("/roles", authenticate, createRole);
-router.put("/roles/:id", authenticate, updateRole);
-router.delete("/roles/:id", authenticate, deleteRole);
+// Roles CRUD (system-admin and super-admin only)
+router.get("/roles", authenticate, authorizeRoles("system-admin", "super-admin"), getRolesList);
+router.post("/roles", authenticate, authorizeRoles("system-admin", "super-admin"), createRole);
+router.put("/roles/:id", authenticate, authorizeRoles("system-admin", "super-admin"), updateRole);
+router.delete("/roles/:id", authenticate, authorizeRoles("system-admin", "super-admin"), deleteRole);
 
-// Granular Permissions
-router.get("/granular-permissions", authenticate, getGranularPermissions);
-router.put("/granular-permissions", authenticate, updateGranularPermissions);
-router.post("/granular-permissions/reset", authenticate, resetGymPermissionsToCommon);
+// Granular Permissions (system-admin and super-admin only)
+router.get("/granular-permissions", authenticate, authorizeRoles("system-admin", "super-admin"), getGranularPermissions);
+router.put("/granular-permissions", authenticate, authorizeRoles("system-admin", "super-admin"), updateGranularPermissions);
+router.post("/granular-permissions/reset", authenticate, authorizeRoles("system-admin", "super-admin"), resetGymPermissionsToCommon);
 
-// Modules Configuration (On/Off)
-router.get("/modules", authenticate, getModulesConfig);
-router.put("/modules", authenticate, updateModulesConfig);
-router.post("/modules/reset", authenticate, resetGymModulesToCommon);
+// Modules Configuration (On/Off) (system-admin and super-admin only)
+router.get("/modules", authenticate, authorizeRoles("system-admin", "super-admin"), getModulesConfig);
+router.put("/modules", authenticate, authorizeRoles("system-admin", "super-admin"), updateModulesConfig);
+router.post("/modules/reset", authenticate, authorizeRoles("system-admin", "super-admin"), resetGymModulesToCommon);
 
 // Sidebar and Permissions
 router.get("/sidebar", authenticate, getSidebar);
-router.get("/menu-items", authenticate, getAllMenuItems);
-router.get("/roles/:role_id/permissions", authenticate, getRolePermissions);
-router.put("/roles/:role_id/permissions", authenticate, updateRolePermissions);
+router.get("/menu-items", authenticate, authorizeRoles("system-admin", "super-admin"), getAllMenuItems);
+router.get("/roles/:role_id/permissions", authenticate, authorizeRoles("system-admin", "super-admin"), getRolePermissions);
+router.put("/roles/:role_id/permissions", authenticate, authorizeRoles("system-admin", "super-admin"), updateRolePermissions);
 
 module.exports = router;

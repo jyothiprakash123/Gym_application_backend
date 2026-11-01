@@ -129,7 +129,7 @@ const getGyms = async (req, res, next) => {
       conditions.push(`(id = $${countParams.length + 1} OR owner_id = $${countParams.length + 2})`);
       countParams.push(req.user.gym_id, req.user.id);
       queryParams.push(req.user.gym_id, req.user.id);
-    } else if (gymId) {
+    } else if (gymId && gymId !== "all" && gymId.trim() !== "") {
       conditions.push(`id = $${countParams.length + 1}`);
       countParams.push(gymId);
       queryParams.push(gymId);
@@ -182,7 +182,9 @@ const getGyms = async (req, res, next) => {
         gyms: result.rows,
         pagination: {
           totalItems: total,
+          total,
           page,
+          currentPage: page,
           limit,
           totalPages: Math.ceil(total / limit) || 1,
         },

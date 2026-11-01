@@ -59,6 +59,13 @@ router.put(
   checkOut
 );
 
+router.post(
+  "/check-out",
+  authenticate,
+  authorizeRoles("system-admin", "super-admin", "admin", "front-desk"),
+  checkOut
+);
+
 // ======================================================
 // GET ALL ATTENDANCE
 // ======================================================

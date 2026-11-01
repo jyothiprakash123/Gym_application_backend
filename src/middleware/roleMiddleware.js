@@ -1,7 +1,13 @@
 // ======================================================
-// ROLE AUTHORIZATION MIDDLEWARE
+// ROLE & RBAC AUTHORIZATION MIDDLEWARE
 // ======================================================
 
+const { requirePermission, hasPermission, getAllowedRoles } = require("./rbacMiddleware");
+
+/**
+ * Legacy role authorization middleware.
+ * Checks whether user's role is in allowedRoles list.
+ */
 const authorizeRoles = (...allowedRoles) => {
   return (req, res, next) => {
     // authenticate middleware must run first
@@ -27,3 +33,7 @@ const authorizeRoles = (...allowedRoles) => {
 };
 
 module.exports = authorizeRoles;
+module.exports.authorizeRoles = authorizeRoles;
+module.exports.requirePermission = requirePermission;
+module.exports.hasPermission = hasPermission;
+module.exports.getAllowedRoles = getAllowedRoles;
