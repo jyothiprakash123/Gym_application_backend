@@ -6,6 +6,7 @@ const {
   getStaffById,
   updateStaff,
   deleteStaff,
+  toggleStaffStatus,
   hardDeleteStaff,
 } = require("../controllers/staffController");
 const authMiddleware = require("../middleware/authMiddleware");
@@ -19,6 +20,8 @@ router.post("/", checkRole("system-admin", "super-admin", "admin"), createStaff)
 router.get("/", checkRole("system-admin", "super-admin", "admin"), getStaff);
 router.get("/:id", checkRole("system-admin", "super-admin", "admin"), getStaffById);
 router.put("/:id", checkRole("system-admin", "super-admin", "admin"), updateStaff);
+router.patch("/:id/toggle-status", checkRole("system-admin", "super-admin", "admin"), toggleStaffStatus);
+router.put("/:id/toggle-status", checkRole("system-admin", "super-admin", "admin"), toggleStaffStatus);
 router.delete("/:id", checkRole("system-admin", "super-admin", "admin"), deleteStaff);
 router.delete("/:id/hard", checkRole("system-admin", "super-admin", "admin"), hardDeleteStaff);
 

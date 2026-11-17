@@ -199,6 +199,10 @@ const DEFAULT_GRANULAR_PERMISSIONS = {
     "settings:general": true,
     "settings:modules": true,
     "settings:permissions": true,
+    "expenses:view": true,
+    "expenses:create": true,
+    "expenses:edit": true,
+    "expenses:delete": true,
   },
   "front-desk": {
     "members:view": true,
@@ -239,6 +243,10 @@ const DEFAULT_GRANULAR_PERMISSIONS = {
     "settings:general": false,
     "settings:modules": false,
     "settings:permissions": false,
+    "expenses:view": false,
+    "expenses:create": false,
+    "expenses:edit": false,
+    "expenses:delete": false,
   },
   "trainer": {
     "members:view": true,
@@ -279,6 +287,10 @@ const DEFAULT_GRANULAR_PERMISSIONS = {
     "settings:general": false,
     "settings:modules": false,
     "settings:permissions": false,
+    "expenses:view": false,
+    "expenses:create": false,
+    "expenses:edit": false,
+    "expenses:delete": false,
   },
   "accountant": {
     "members:view": true,
@@ -319,6 +331,10 @@ const DEFAULT_GRANULAR_PERMISSIONS = {
     "settings:general": false,
     "settings:modules": false,
     "settings:permissions": false,
+    "expenses:view": true,
+    "expenses:create": true,
+    "expenses:edit": true,
+    "expenses:delete": false,
   },
   "super-admin": {
     "members:view": true,
@@ -359,6 +375,10 @@ const DEFAULT_GRANULAR_PERMISSIONS = {
     "settings:general": true,
     "settings:modules": true,
     "settings:permissions": true,
+    "expenses:view": true,
+    "expenses:create": true,
+    "expenses:edit": true,
+    "expenses:delete": true,
   },
   "system-admin": {
     "members:view": true,
@@ -399,6 +419,10 @@ const DEFAULT_GRANULAR_PERMISSIONS = {
     "settings:general": true,
     "settings:modules": true,
     "settings:permissions": true,
+    "expenses:view": true,
+    "expenses:create": true,
+    "expenses:edit": true,
+    "expenses:delete": true,
   }
 };
 

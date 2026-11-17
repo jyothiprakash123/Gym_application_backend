@@ -12,6 +12,7 @@ const {
 
 const authenticate = require("../middleware/authMiddleware");
 const authorizeRoles = require("../middleware/roleMiddleware");
+const { getAllowedRoles } = require("../config/rbacConfig");
 
 const router = express.Router();
 
@@ -22,7 +23,7 @@ const router = express.Router();
 router.post(
   "/bulk",
   authenticate,
-  authorizeRoles("system-admin", "super-admin", "admin", "front-desk"),
+  authorizeRoles(...getAllowedRoles("attendance", "create")),
   markBulkAttendance
 );
 
@@ -33,7 +34,7 @@ router.post(
 router.delete(
   "/bulk",
   authenticate,
-  authorizeRoles("system-admin", "super-admin", "admin"),
+  authorizeRoles(...getAllowedRoles("attendance", "delete")),
   deleteBulkAttendance
 );
 
@@ -44,7 +45,7 @@ router.delete(
 router.post(
   "/check-in",
   authenticate,
-  authorizeRoles("system-admin", "super-admin", "admin", "front-desk"),
+  authorizeRoles(...getAllowedRoles("attendance", "create")),
   checkIn
 );
 
@@ -55,14 +56,14 @@ router.post(
 router.put(
   "/:id/check-out",
   authenticate,
-  authorizeRoles("system-admin", "super-admin", "admin", "front-desk"),
+  authorizeRoles(...getAllowedRoles("attendance", "create")),
   checkOut
 );
 
 router.post(
   "/check-out",
   authenticate,
-  authorizeRoles("system-admin", "super-admin", "admin", "front-desk"),
+  authorizeRoles(...getAllowedRoles("attendance", "create")),
   checkOut
 );
 
@@ -73,7 +74,7 @@ router.post(
 router.get(
   "/",
   authenticate,
-  authorizeRoles("system-admin", "super-admin", "admin", "front-desk"),
+  authorizeRoles(...getAllowedRoles("attendance", "view")),
   getAttendance
 );
 
@@ -84,7 +85,7 @@ router.get(
 router.delete(
   "/:id",
   authenticate,
-  authorizeRoles("system-admin", "super-admin", "admin"),
+  authorizeRoles(...getAllowedRoles("attendance", "delete")),
   deleteAttendance
 );
 
@@ -95,7 +96,7 @@ router.delete(
 router.put(
   "/:id",
   authenticate,
-  authorizeRoles("system-admin", "super-admin", "admin", "front-desk"),
+  authorizeRoles(...getAllowedRoles("attendance", "edit")),
   updateAttendance
 );
 

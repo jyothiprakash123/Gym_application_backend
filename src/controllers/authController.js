@@ -68,10 +68,16 @@ const login = async (req, res, next) => {
         u.branch_id,
         u.is_active,
         u.last_login,
-        r.name AS role_name
+        r.name AS role_name,
+        g.name AS gym_name,
+        b.name AS branch_name
       FROM users u
       LEFT JOIN roles r
         ON r.id = u.role_id
+      LEFT JOIN gyms g
+        ON g.id = u.gym_id
+      LEFT JOIN branches b
+        ON b.id = u.branch_id
       WHERE LOWER(u.email) = $1
       LIMIT 1
     `;
@@ -98,6 +104,18 @@ const login = async (req, res, next) => {
       return res.status(403).json({
         success: false,
         message: "Your account has been deactivated",
+      });
+    }
+
+    // Check linked staff active status
+    const staffLoginCheck = await pool.query(
+      "SELECT is_active FROM staff WHERE user_id = $1 LIMIT 1",
+      [user.id]
+    );
+    if (staffLoginCheck.rows.length > 0 && !staffLoginCheck.rows[0].is_active) {
+      return res.status(403).json({
+        success: false,
+        message: "Your staff account has been deactivated",
       });
     }
 
@@ -206,12 +224,16 @@ const login = async (req, res, next) => {
           fullName: user.full_name,
           phone: user.phone,
           gym_id: user.gym_id,
+          gym_name: user.gym_name || null,
           branch_id: user.branch_id,
+          branch_name: user.branch_name || null,
 
           role: {
             id: user.role_id,
             name: user.role_name,
           },
+          role_name: user.role_name,
+          roleName: user.role_name,
         },
 
         gym,
@@ -289,6 +311,18 @@ const refreshToken = async (req, res, next) => {
       return res.status(403).json({
         success: false,
         message: "Your account has been deactivated",
+      });
+    }
+
+    // Check linked staff active status
+    const staffLoginCheck = await pool.query(
+      "SELECT is_active FROM staff WHERE user_id = $1 LIMIT 1",
+      [user.id]
+    );
+    if (staffLoginCheck.rows.length > 0 && !staffLoginCheck.rows[0].is_active) {
+      return res.status(403).json({
+        success: false,
+        message: "Your staff account has been deactivated",
       });
     }
 
@@ -450,12 +484,16 @@ const me = async (req, res) => {
         fullName: req.user.full_name,
         phone: req.user.phone,
         gym_id: req.user.gym_id,
+        gym_name: req.user.gym_name || null,
         branch_id: req.user.branch_id,
+        branch_name: req.user.branch_name || null,
 
         role: {
           id: req.user.role_id,
           name: req.user.role_name,
         },
+        role_name: req.user.role_name,
+        roleName: req.user.role_name,
       },
     },
   });

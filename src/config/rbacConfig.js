@@ -119,6 +119,15 @@ const PERMISSION_MATRIX = {
 };
 
 /**
+ * Normalizes a role string to canonical lowercase hyphenated format.
+ * e.g. "Front Desk", "front_desk", "Front-desk" -> "front-desk"
+ */
+const normalizeRole = (role) => {
+  if (!role || typeof role !== "string") return "";
+  return role.toLowerCase().trim().replace(/[\s_]+/g, "-");
+};
+
+/**
  * Checks whether a given role has permission to perform an action on a module.
  *
  * @param {string} roleName - e.g. 'front-desk', 'admin', 'super-admin', 'system-admin'
@@ -128,7 +137,8 @@ const PERMISSION_MATRIX = {
  */
 const hasPermission = (roleName, moduleName, action) => {
   if (!roleName || !moduleName || !action) return false;
-  const rolePermissions = PERMISSION_MATRIX[roleName];
+  const canonicalRole = normalizeRole(roleName);
+  const rolePermissions = PERMISSION_MATRIX[canonicalRole];
   if (!rolePermissions) return false;
 
   const modulePermissions = rolePermissions[moduleName];
@@ -162,11 +172,12 @@ const getAllowedRoles = (moduleName, action) => {
  * @returns {object|null}
  */
 const getRolePermissions = (roleName) => {
-  return PERMISSION_MATRIX[roleName] || null;
+  return PERMISSION_MATRIX[normalizeRole(roleName)] || null;
 };
 
 module.exports = {
   PERMISSION_MATRIX,
+  normalizeRole,
   hasPermission,
   getAllowedRoles,
   getRolePermissions,

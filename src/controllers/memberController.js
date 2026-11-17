@@ -142,6 +142,21 @@ const createMember = async (req, res, next) => {
       });
     }
 
+    if (req.body.leadId) {
+      const existingLead = await pool.query(
+        "SELECT id, status, converted_member_id FROM leads WHERE id = $1",
+        [req.body.leadId]
+      );
+      if (existingLead.rows.length > 0) {
+        if (existingLead.rows[0].status === "Converted" || existingLead.rows[0].converted_member_id) {
+          return res.status(400).json({
+            success: false,
+            message: "Lead has already been converted to a member",
+          });
+        }
+      }
+    }
+
     const result = await pool.query(
       `
       INSERT INTO members (
@@ -212,6 +227,25 @@ const createMember = async (req, res, next) => {
     } catch (notifError) {
       console.error("Failed to send welcome SMS:", notifError);
       // We don't fail the member creation if SMS fails
+    }
+
+    // Link and convert lead if leadId is passed
+    if (req.body.leadId) {
+      try {
+        await pool.query(
+          `UPDATE leads 
+           SET status = 'Converted', converted_member_id = $1, updated_at = CURRENT_TIMESTAMP 
+           WHERE id = $2 AND (status IS DISTINCT FROM 'Converted' AND converted_member_id IS NULL)`,
+          [result.rows[0].id, req.body.leadId]
+        );
+        await pool.query(
+          `INSERT INTO lead_interactions (lead_id, interaction_type, notes, done_by, interaction_date)
+           VALUES ($1, 'system', $2, $3, CURRENT_TIMESTAMP)`,
+          [req.body.leadId, `Lead converted to member (${result.rows[0].full_name}).`, req.user?.id || null]
+        );
+      } catch (leadLinkErr) {
+        console.error("Failed to link converted lead in memberController:", leadLinkErr);
+      }
     }
 
     return res.status(201).json({

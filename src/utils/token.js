@@ -6,11 +6,13 @@ const crypto = require("crypto");
 // ======================================================
 
 const generateAccessToken = (user) => {
+  const roleName = user.role_name || user.role?.name || user.role || "";
   return jwt.sign(
     {
       userId: user.id,
       roleId: user.role_id,
-      roleName: user.role_name,
+      roleName: roleName,
+      role: roleName,
     },
     process.env.JWT_ACCESS_SECRET,
     {

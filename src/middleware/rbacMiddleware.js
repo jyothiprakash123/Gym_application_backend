@@ -1,4 +1,4 @@
-const { hasPermission, getAllowedRoles, PERMISSION_MATRIX } = require("../config/rbacConfig");
+const { hasPermission, getAllowedRoles, PERMISSION_MATRIX, normalizeRole } = require("../config/rbacConfig");
 
 /**
  * Express middleware that enforces central RBAC permissions.
@@ -23,7 +23,8 @@ const requirePermission = (moduleName, action) => {
       });
     }
 
-    const userRole = req.user.role_name;
+    const rawRole = req.user.role_name || req.user.role || "";
+    const userRole = normalizeRole(rawRole);
 
     if (!userRole) {
       return res.status(403).json({

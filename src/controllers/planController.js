@@ -1,5 +1,6 @@
 const pool = require("../config/db");
 const { resolveBranchAccess } = require("../middleware/tenantMiddleware");
+const { validateMoney } = require("../utils/financeUtils");
 
 // ======================================================
 // ROLE PERMISSION CONSTANTS FOR MEMBERSHIP PLANS
@@ -28,13 +29,14 @@ const createPlan = async (req, res, next) => {
       });
     }
 
-    const numPrice = Number(price);
-    if (isNaN(numPrice) || numPrice < 0) {
+    const priceCheck = validateMoney(price, { fieldName: "Plan price", allowZero: true });
+    if (!priceCheck.isValid) {
       return res.status(400).json({
         success: false,
-        message: "Plan price cannot be negative",
+        message: priceCheck.error,
       });
     }
+    const numPrice = priceCheck.parsedAmount;
 
     const numDuration = parseInt(durationDays, 10);
     if (isNaN(numDuration) || numDuration <= 0) {
@@ -44,12 +46,16 @@ const createPlan = async (req, res, next) => {
       });
     }
 
-    const numFreezeFee = freezeFee !== undefined && freezeFee !== null ? Number(freezeFee) : 0;
-    if (isNaN(numFreezeFee) || numFreezeFee < 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Freeze fee cannot be negative",
-      });
+    let numFreezeFee = 0;
+    if (freezeFee !== undefined && freezeFee !== null && freezeFee !== "") {
+      const feeCheck = validateMoney(freezeFee, { fieldName: "Freeze fee", allowZero: true });
+      if (!feeCheck.isValid) {
+        return res.status(400).json({
+          success: false,
+          message: feeCheck.error,
+        });
+      }
+      numFreezeFee = feeCheck.parsedAmount;
     }
 
     // 1. Validate branch ownership
@@ -342,14 +348,16 @@ const updatePlan = async (req, res, next) => {
       });
     }
 
+    let validatedPrice = null;
     if (price !== undefined && price !== null && price !== "") {
-      const numPrice = Number(price);
-      if (isNaN(numPrice) || numPrice < 0) {
+      const priceCheck = validateMoney(price, { fieldName: "Plan price", allowZero: true });
+      if (!priceCheck.isValid) {
         return res.status(400).json({
           success: false,
-          message: "Plan price cannot be negative",
+          message: priceCheck.error,
         });
       }
+      validatedPrice = priceCheck.parsedAmount;
     }
 
     if (durationDays !== undefined && durationDays !== null && durationDays !== "") {
@@ -362,14 +370,16 @@ const updatePlan = async (req, res, next) => {
       }
     }
 
+    let validatedFreezeFee = null;
     if (freezeFee !== undefined && freezeFee !== null && freezeFee !== "") {
-      const numFee = Number(freezeFee);
-      if (isNaN(numFee) || numFee < 0) {
+      const feeCheck = validateMoney(freezeFee, { fieldName: "Freeze fee", allowZero: true });
+      if (!feeCheck.isValid) {
         return res.status(400).json({
           success: false,
-          message: "Freeze fee cannot be negative",
+          message: feeCheck.error,
         });
       }
+      validatedFreezeFee = feeCheck.parsedAmount;
     }
 
     const result = await pool.query(
@@ -393,9 +403,9 @@ const updatePlan = async (req, res, next) => {
         name?.trim() || null,
         description ?? null,
         durationDays ?? null,
-        price ?? null,
+        validatedPrice,
         maxFreezeDays ?? null,
-        freezeFee !== undefined && freezeFee !== null && freezeFee !== "" ? Number(freezeFee) : null,
+        validatedFreezeFee,
         isActive ?? null,
         id,
       ]

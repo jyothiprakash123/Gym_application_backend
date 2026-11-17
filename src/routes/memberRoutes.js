@@ -16,6 +16,7 @@ const {
 
 const authenticate = require("../middleware/authMiddleware");
 const authorizeRoles = require("../middleware/roleMiddleware");
+const { getAllowedRoles } = require("../config/rbacConfig");
 
 const router = express.Router();
 
@@ -26,10 +27,7 @@ const router = express.Router();
 router.post(
   "/",
   authenticate,
-  authorizeRoles("system-admin", "super-admin",
-    "admin",
-    "front-desk"
-  ),
+  authorizeRoles(...getAllowedRoles("members", "create")),
   createMember
 );
 
@@ -40,10 +38,7 @@ router.post(
 router.get(
   "/",
   authenticate,
-  authorizeRoles("system-admin", "super-admin",
-    "admin",
-    "front-desk"
-  ),
+  authorizeRoles(...getAllowedRoles("members", "view")),
   getMembers
 );
 
@@ -54,10 +49,7 @@ router.get(
 router.get(
   "/export",
   authenticate,
-  authorizeRoles("system-admin", "super-admin",
-    "admin",
-    "front-desk"
-  ),
+  authorizeRoles(...getAllowedRoles("members", "view")),
   exportMembers
 );
 
@@ -68,10 +60,7 @@ router.get(
 router.post(
   "/import",
   authenticate,
-  authorizeRoles("system-admin", "super-admin",
-    "admin",
-    "front-desk"
-  ),
+  authorizeRoles(...getAllowedRoles("members", "create")),
   importMembers
 );
 
@@ -82,10 +71,7 @@ router.post(
 router.post(
   "/:id/hold-fees",
   authenticate,
-  authorizeRoles("system-admin", "super-admin",
-    "admin",
-    "front-desk"
-  ),
+  authorizeRoles(...getAllowedRoles("members", "edit")),
   holdMemberFees
 );
 
@@ -96,10 +82,7 @@ router.post(
 router.post(
   "/:id/resume-fees",
   authenticate,
-  authorizeRoles("system-admin", "super-admin",
-    "admin",
-    "front-desk"
-  ),
+  authorizeRoles(...getAllowedRoles("members", "edit")),
   resumeMemberFees
 );
 
@@ -110,10 +93,7 @@ router.post(
 router.get(
   "/:id",
   authenticate,
-  authorizeRoles("system-admin", "super-admin",
-    "admin",
-    "front-desk"
-  ),
+  authorizeRoles(...getAllowedRoles("members", "view")),
   getMemberById
 );
 
@@ -124,10 +104,7 @@ router.get(
 router.get(
   "/:id/achievements",
   authenticate,
-  authorizeRoles("system-admin", "super-admin",
-    "admin",
-    "front-desk"
-  ),
+  authorizeRoles(...getAllowedRoles("members", "view")),
   getMemberAchievements
 );
 
@@ -138,10 +115,7 @@ router.get(
 router.put(
   "/:id",
   authenticate,
-  authorizeRoles("system-admin", "super-admin",
-    "admin",
-    "front-desk"
-  ),
+  authorizeRoles(...getAllowedRoles("members", "edit")),
   updateMember
 );
 
@@ -152,7 +126,7 @@ router.put(
 router.delete(
   "/:id",
   authenticate,
-  authorizeRoles("system-admin", "super-admin", "admin"),
+  authorizeRoles(...getAllowedRoles("members", "delete")),
   deleteMember
 );
 
@@ -163,9 +137,7 @@ router.delete(
 router.delete(
   "/:id/hard",
   authenticate,
-  authorizeRoles("system-admin", "super-admin",
-    "admin"
-  ),
+  authorizeRoles("system-admin", "super-admin"),
   hardDeleteMember
 );
 

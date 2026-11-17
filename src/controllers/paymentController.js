@@ -1,6 +1,7 @@
 const pool = require("../config/db");
 const notificationService = require("../services/notificationService");
 const { resolveBranchAccess } = require("../middleware/tenantMiddleware");
+const { validateMoney } = require("../utils/financeUtils");
 const {
   formatLocalDate,
   getTodayDateStr,
@@ -47,14 +48,15 @@ const createPayment = async (req, res, next) => {
     });
   }
 
-  // Validate amount: must be positive number (> 0)
-  const numAmount = Number(amount);
-  if (isNaN(numAmount) || numAmount <= 0) {
+  // Validate amount: must be positive number with at most 2 decimals and sane maximum
+  const moneyCheck = validateMoney(amount, { fieldName: "Payment amount", allowZero: false });
+  if (!moneyCheck.isValid) {
     return res.status(400).json({
       success: false,
-      message: "Payment amount must be a positive number greater than 0",
+      message: moneyCheck.error,
     });
   }
+  const numAmount = moneyCheck.parsedAmount;
 
   // Validate payment mode: must match supported modes (Cash, UPI, Card, NetBanking, Cheque, On Hold)
   const modeKey = String(rawPaymentMode || "").trim().toLowerCase();

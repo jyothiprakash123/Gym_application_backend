@@ -41,10 +41,16 @@ const authenticate = async (req, res, next) => {
         u.gym_id,
         u.branch_id,
         u.is_active,
-        r.name AS role_name
+        r.name AS role_name,
+        g.name AS gym_name,
+        b.name AS branch_name
       FROM users u
       LEFT JOIN roles r
         ON r.id = u.role_id
+      LEFT JOIN gyms g
+        ON g.id = u.gym_id
+      LEFT JOIN branches b
+        ON b.id = u.branch_id
       WHERE u.id = $1
       LIMIT 1
       `,
@@ -71,11 +77,25 @@ const authenticate = async (req, res, next) => {
       });
     }
 
+    // Verify linked staff active status (blocks staff when inactive)
+    const staffStatusCheck = await pool.query(
+      "SELECT is_active FROM staff WHERE user_id = $1 LIMIT 1",
+      [user.id]
+    );
+    if (staffStatusCheck.rows.length > 0 && !staffStatusCheck.rows[0].is_active) {
+      return res.status(403).json({
+        success: false,
+        message: "Your staff account has been deactivated",
+      });
+    }
+
     // ----------------------------------------------
     // 6. Attach user and tenant context to request
     // ----------------------------------------------
 
     req.user = user;
+    req.user.role = user.role_name;
+    req.user.role_name = user.role_name;
 
     // Non-system-admin accounts must belong to a gym
     if (user.role_name !== "system-admin" && !user.gym_id) {
