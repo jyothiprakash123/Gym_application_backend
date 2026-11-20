@@ -8,25 +8,18 @@ const {
   generateRefreshToken,
 } = require("../utils/token");
 
+const {
+  getRefreshCookieOptions,
+  getAccessCookieOptions,
+  getClearCookieOptions,
+} = require("../config/cookieConfig");
+
 // ======================================================
-// COOKIE OPTIONS
+// COOKIE OPTIONS (Dynamic getters adhering to cookieConfig)
 // ======================================================
 
-const refreshCookieOptions = {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-  maxAge: 7 * 24 * 60 * 60 * 1000,
-  path: "/",
-};
-
-const accessCookieOptions = {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-  maxAge: 15 * 60 * 1000, // 15 minutes
-  path: "/",
-};
+const refreshCookieOptions = getRefreshCookieOptions();
+const accessCookieOptions = getAccessCookieOptions();
 
 // ======================================================
 // LOGIN
@@ -198,13 +191,13 @@ const login = async (req, res, next) => {
     res.cookie(
       "refreshToken",
       refreshToken,
-      refreshCookieOptions
+      getRefreshCookieOptions()
     );
 
     res.cookie(
       "accessToken",
       accessToken,
-      accessCookieOptions
+      getAccessCookieOptions()
     );
 
     // ----------------------------------------------
@@ -375,13 +368,13 @@ const refreshToken = async (req, res, next) => {
     res.cookie(
       "refreshToken",
       newRefreshToken,
-      refreshCookieOptions
+      getRefreshCookieOptions()
     );
 
     res.cookie(
       "accessToken",
       newAccessToken,
-      accessCookieOptions
+      getAccessCookieOptions()
     );
 
     return res.status(200).json({
@@ -441,22 +434,12 @@ const logout = async (req, res, next) => {
 
     res.clearCookie(
       "refreshToken",
-      {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-        path: "/",
-      }
+      getClearCookieOptions()
     );
 
     res.clearCookie(
       "accessToken",
-      {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-        path: "/",
-      }
+      getClearCookieOptions()
     );
 
     return res.status(200).json({

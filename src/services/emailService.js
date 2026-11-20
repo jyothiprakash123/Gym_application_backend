@@ -45,6 +45,22 @@ class EmailService {
    * Generates a modern branded HTML email template for gym notices
    */
   generateEmailHtml({ title, content, category, priority, gymName, branchName, memberName }) {
+    const escapeHtml = (str) => {
+      if (!str) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    };
+
+    const safeTitle = escapeHtml(title);
+    const safeContent = escapeHtml(content);
+    const safeGymName = escapeHtml(gymName);
+    const safeBranchName = escapeHtml(branchName);
+    const safeMemberName = escapeHtml(memberName);
+
     const priorityColor = priority === "Urgent" ? "#e11d48" : priority === "High" ? "#d97706" : "#2563eb";
     const categoryBg = category === "Closure / Holiday" ? "#fef2f2" : "#eff6ff";
     const categoryColor = category === "Closure / Holiday" ? "#b91c1c" : "#1d4ed8";
@@ -55,7 +71,7 @@ class EmailService {
       <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>${title}</title>
+        <title>${safeTitle}</title>
       </head>
       <body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b;">
         <div style="max-width: 600px; margin: 30px auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.06); border: 1px solid #e2e8f0;">
@@ -66,7 +82,7 @@ class EmailService {
               FitZone Gyms
             </div>
             <div style="font-size: 13px; color: #bfdbfe; font-weight: 500;">
-              ${gymName || "FitZone Fitness Club"} • ${branchName || "All Branches (Common Notice)"}
+              ${safeGymName || "FitZone Fitness Club"} • ${safeBranchName || "All Branches (Common Notice)"}
             </div>
           </div>
 
@@ -81,15 +97,15 @@ class EmailService {
               </span>
             </div>
 
-            ${memberName ? `<p style="font-size: 14px; color: #64748b; margin-top: 0; margin-bottom: 12px;">Dear <strong>${memberName}</strong>,</p>` : ""}
+            ${safeMemberName ? `<p style="font-size: 14px; color: #64748b; margin-top: 0; margin-bottom: 12px;">Dear <strong>${safeMemberName}</strong>,</p>` : ""}
 
             <h1 style="font-size: 20px; font-weight: 700; color: #0f172a; margin-top: 0; margin-bottom: 16px; line-height: 1.3;">
-              ${title}
+              ${safeTitle}
             </h1>
 
             <div style="background-color: #f8fafc; border-left: 4px solid #2563eb; padding: 18px 20px; border-radius: 0 8px 8px 0; margin-bottom: 24px;">
               <p style="font-size: 14.5px; line-height: 1.6; color: #334155; margin: 0; white-space: pre-line;">
-                ${content}
+                ${safeContent}
               </p>
             </div>
 

@@ -8,6 +8,7 @@ const {
 } = require("../controllers/authController");
 
 const authenticate = require("../middleware/authMiddleware");
+const { authLimiter } = require("../middleware/rateLimiter");
 
 const router = express.Router();
 
@@ -16,10 +17,10 @@ const router = express.Router();
 // ======================================================
 
 // POST /api/auth/login
-router.post("/login", login);
+router.post("/login", authLimiter, login);
 
 // POST /api/auth/refresh
-router.post("/refresh", refreshToken);
+router.post("/refresh", authLimiter, refreshToken);
 
 // POST /api/auth/logout
 router.post("/logout", logout);
