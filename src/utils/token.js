@@ -1,15 +1,18 @@
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 
 // ======================================================
 // ACCESS TOKEN
 // ======================================================
 
 const generateAccessToken = (user) => {
+  const roleName = user.role_name || user.role?.name || user.role || "";
   return jwt.sign(
     {
       userId: user.id,
       roleId: user.role_id,
-      roleName: user.role_name,
+      roleName: roleName,
+      role: roleName,
     },
     process.env.JWT_ACCESS_SECRET,
     {
@@ -20,13 +23,14 @@ const generateAccessToken = (user) => {
 };
 
 // ======================================================
-// REFRESH TOKEN
+// REFRESH TOKEN (with jti for strict rotation & replay protection)
 // ======================================================
 
 const generateRefreshToken = (user) => {
   return jwt.sign(
     {
       userId: user.id,
+      jti: crypto.randomUUID(),
     },
     process.env.JWT_REFRESH_SECRET,
     {

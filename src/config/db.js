@@ -1,4 +1,7 @@
-const { Pool } = require("pg");
+const { Pool, types } = require("pg");
+
+// Return PostgreSQL DATE (OID 1082) as 'YYYY-MM-DD' string to avoid timezone shifting
+types.setTypeParser(1082, (val) => val);
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,

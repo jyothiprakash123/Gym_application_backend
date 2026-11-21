@@ -60,7 +60,7 @@ const getBillingPlans = async (req, res, next) => {
       success: true,
       data: {
         billingPlans: result.rows,
-        pagination: { totalItems: total, page, limit, totalPages: Math.ceil(total / limit) || 1 },
+        pagination: { totalItems: total, total, page, currentPage: page, limit, totalPages: Math.ceil(total / limit) || 1 },
       },
     });
   } catch (error) {

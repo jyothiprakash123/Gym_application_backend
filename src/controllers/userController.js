@@ -1,5 +1,6 @@
 const pool = require("../config/db");
 const bcrypt = require("bcryptjs");
+const { validatePasswordStrength } = require("../utils/passwordPolicy");
 
 // ======================================================
 // GET ROLES
@@ -65,6 +66,13 @@ const updateProfile = async (req, res, next) => {
     ];
 
     if (password && password.trim() !== "") {
+      const passCheck = validatePasswordStrength(password);
+      if (!passCheck.isValid) {
+        return res.status(400).json({
+          success: false,
+          message: passCheck.error,
+        });
+      }
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(password, salt);
       updateQuery += `, password_hash = $5::text`;
@@ -305,6 +313,13 @@ const updateUser = async (req, res, next) => {
     }
 
     if (password && password.trim() !== "") {
+      const passCheck = validatePasswordStrength(password);
+      if (!passCheck.isValid) {
+        return res.status(400).json({
+          success: false,
+          message: passCheck.error,
+        });
+      }
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(password, salt);
       updates.push(`password_hash = $${paramIndex++}::text`);

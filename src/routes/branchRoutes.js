@@ -11,6 +11,7 @@ const {
 
 const authenticate = require("../middleware/authMiddleware");
 const authorizeRoles = require("../middleware/roleMiddleware");
+const { requirePermission } = require("../middleware/rbacMiddleware");
 
 const router = express.Router();
 
@@ -29,11 +30,12 @@ router.post(
 // GET ALL
 // ======================================================
 
-// Both super-admin and admin can view branches
+// Enforce central RBAC (system-admin, super-admin, admin, front-desk, trainer, accountant)
+// Row-level scoping in branchController restricts branch-bound staff to their own branch.
 router.get(
   "/",
   authenticate,
-  authorizeRoles("system-admin", "super-admin", "admin"),
+  requirePermission("branches", "view"),
   getBranches
 );
 

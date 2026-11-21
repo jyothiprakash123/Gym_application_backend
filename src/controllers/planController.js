@@ -1,22 +1,67 @@
 const pool = require("../config/db");
+const { resolveBranchAccess } = require("../middleware/tenantMiddleware");
+const { validateMoney } = require("../utils/financeUtils");
+
+// ======================================================
+// ROLE PERMISSION CONSTANTS FOR MEMBERSHIP PLANS
+// ======================================================
+const ALLOWED_READ_ROLES = ["system-admin", "super-admin", "admin", "front-desk"];
+const ALLOWED_MUTATE_ROLES = ["system-admin", "super-admin", "admin"];
 
 // ======================================================
 // CREATE MEMBERSHIP PLAN
 // ======================================================
 const createPlan = async (req, res, next) => {
   try {
-    const { branchId, name, description, durationDays, price, maxFreezeDays } = req.body;
+    if (!ALLOWED_MUTATE_ROLES.includes(req.user?.role_name)) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to create membership plans",
+      });
+    }
 
-    if (!branchId || !name || durationDays === undefined || price === undefined) {
+    const { branchId, name, description, durationDays, price, maxFreezeDays, freezeFee } = req.body;
+
+    if (!branchId || !name || !name.trim() || durationDays === undefined || price === undefined) {
       return res.status(400).json({
         success: false,
         message: "Branch ID, name, duration (days), and price are required",
       });
     }
 
+    const priceCheck = validateMoney(price, { fieldName: "Plan price", allowZero: true });
+    if (!priceCheck.isValid) {
+      return res.status(400).json({
+        success: false,
+        message: priceCheck.error,
+      });
+    }
+    const numPrice = priceCheck.parsedAmount;
+
+    const numDuration = parseInt(durationDays, 10);
+    if (isNaN(numDuration) || numDuration <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Plan duration must be at least 1 day",
+      });
+    }
+
+    let numFreezeFee = 0;
+    if (freezeFee !== undefined && freezeFee !== null && freezeFee !== "") {
+      const feeCheck = validateMoney(freezeFee, { fieldName: "Freeze fee", allowZero: true });
+      if (!feeCheck.isValid) {
+        return res.status(400).json({
+          success: false,
+          message: feeCheck.error,
+        });
+      }
+      numFreezeFee = feeCheck.parsedAmount;
+    }
+
+    // 1. Validate branch ownership
     const branchResult = await pool.query(
       `
-      SELECT id, is_active FROM branches WHERE id = $1 LIMIT 1
+      SELECT id, gym_id, is_active FROM branches WHERE id = $1 LIMIT 1
       `,
       [branchId]
     );
@@ -28,6 +73,29 @@ const createPlan = async (req, res, next) => {
       });
     }
 
+    const branchGymId = branchResult.rows[0].gym_id;
+
+    if (req.tenant?.gymId && branchGymId !== req.tenant.gymId) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have access to this branch",
+      });
+    }
+
+    if (req.tenant?.branchId && req.tenant.branchId !== branchId) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have access to this branch",
+      });
+    }
+
+    if (!branchResult.rows[0].is_active) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot create plan in an inactive branch",
+      });
+    }
+
     const result = await pool.query(
       `
       INSERT INTO membership_plans (
@@ -36,9 +104,10 @@ const createPlan = async (req, res, next) => {
         description,
         duration_days,
         price,
-        max_freeze_days
+        max_freeze_days,
+        freeze_fee
       )
-      VALUES ($1, $2, $3, $4, $5, $6)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING *
       `,
       [
@@ -48,6 +117,7 @@ const createPlan = async (req, res, next) => {
         durationDays,
         price,
         maxFreezeDays ?? 0,
+        numFreezeFee,
       ]
     );
 
@@ -66,6 +136,13 @@ const createPlan = async (req, res, next) => {
 // ======================================================
 const getPlans = async (req, res, next) => {
   try {
+    if (!ALLOWED_READ_ROLES.includes(req.user?.role_name)) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to view membership plans",
+      });
+    }
+
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const search = req.query.search || "";
@@ -78,23 +155,31 @@ const getPlans = async (req, res, next) => {
     let dataParams = [];
     let conditions = [];
 
-    // Role-based access control (similar to members)
-    if (req.user.role_name === "admin") {
-      conditions.push(`b.manager_id = $${countParams.length + 1}`);
-      countParams.push(req.user.id);
-      dataParams.push(req.user.id);
-    } else if (req.user.role_name !== "system-admin" && req.user.role_name !== "super-admin") {
+    // Tenant Gym Isolation
+    if (req.tenant?.gymId) {
+      conditions.push(`b.gym_id = $${countParams.length + 1}`);
+      countParams.push(req.tenant.gymId);
+      dataParams.push(req.tenant.gymId);
+    } else if (!req.tenant?.isSystemAdmin) {
       return res.status(403).json({
         success: false,
         message: "You do not have permission to view membership plans",
       });
     }
 
-    if (branchId) {
+    // Shared branch-access helper (Day 2 Prompt 2)
+    const branchAccess = resolveBranchAccess(req);
+    if (branchAccess.type === "BRANCH" && branchAccess.branchId) {
+      conditions.push(`p.branch_id = $${countParams.length + 1}`);
+      countParams.push(branchAccess.branchId);
+      dataParams.push(branchAccess.branchId);
+    }
+
+    if (branchId && branchAccess.type !== "BRANCH") {
       conditions.push(`p.branch_id = $${countParams.length + 1}`);
       countParams.push(branchId);
       dataParams.push(branchId);
-    } else if (gymId) {
+    } else if (gymId && req.tenant?.isSystemAdmin) {
       conditions.push(`b.gym_id = $${countParams.length + 1}`);
       countParams.push(gymId);
       dataParams.push(gymId);
@@ -160,17 +245,37 @@ const getPlans = async (req, res, next) => {
 // ======================================================
 const getPlanById = async (req, res, next) => {
   try {
+    if (!ALLOWED_READ_ROLES.includes(req.user?.role_name)) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to view membership plans",
+      });
+    }
+
     const { id } = req.params;
 
-    const result = await pool.query(
-      `
-      SELECT *
-      FROM membership_plans
-      WHERE id = $1
-      LIMIT 1
-      `,
-      [id]
-    );
+    let query = `
+      SELECT p.*, b.name AS branch_name, b.gym_id, g.name AS gym_name
+      FROM membership_plans p
+      LEFT JOIN branches b ON p.branch_id = b.id
+      LEFT JOIN gyms g ON g.id = b.gym_id
+      WHERE p.id = $1
+    `;
+    const params = [id];
+
+    if (req.tenant?.gymId) {
+      params.push(req.tenant.gymId);
+      query += ` AND b.gym_id = $${params.length}`;
+    }
+
+    if (req.tenant?.branchId) {
+      params.push(req.tenant.branchId);
+      query += ` AND p.branch_id = $${params.length}`;
+    }
+
+    query += ` LIMIT 1`;
+
+    const result = await pool.query(query, params);
 
     if (result.rows.length === 0) {
       return res.status(404).json({
@@ -193,19 +298,88 @@ const getPlanById = async (req, res, next) => {
 // ======================================================
 const updatePlan = async (req, res, next) => {
   try {
-    const { id } = req.params;
-    const { branchId, name, description, durationDays, price, maxFreezeDays, isActive } = req.body;
+    if (!ALLOWED_MUTATE_ROLES.includes(req.user?.role_name)) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to update membership plans",
+      });
+    }
 
-    const planResult = await pool.query(`SELECT id FROM membership_plans WHERE id = $1 LIMIT 1`, [id]);
-    if (planResult.rows.length === 0) {
+    const { id } = req.params;
+    const { branchId, name, description, durationDays, price, maxFreezeDays, freezeFee, isActive } = req.body;
+
+    // Verify plan exists and belongs to tenant gym
+    const planCheck = await pool.query(
+      `SELECT p.id, b.gym_id, p.branch_id 
+       FROM membership_plans p 
+       JOIN branches b ON b.id = p.branch_id 
+       WHERE p.id = $1 LIMIT 1`,
+      [id]
+    );
+
+    if (
+      planCheck.rows.length === 0 ||
+      (req.tenant?.gymId && planCheck.rows[0].gym_id !== req.tenant.gymId)
+    ) {
       return res.status(404).json({ success: false, message: "Membership plan not found" });
     }
 
+    if (req.tenant?.branchId && planCheck.rows[0].branch_id !== req.tenant.branchId) {
+      return res.status(403).json({ success: false, message: "You do not have access to this plan" });
+    }
+
     if (branchId) {
-      const branchResult = await pool.query(`SELECT id FROM branches WHERE id = $1 LIMIT 1`, [branchId]);
+      const branchResult = await pool.query(`SELECT id, gym_id FROM branches WHERE id = $1 LIMIT 1`, [branchId]);
       if (branchResult.rows.length === 0) {
         return res.status(404).json({ success: false, message: "Branch not found" });
       }
+      if (req.tenant?.gymId && branchResult.rows[0].gym_id !== req.tenant.gymId) {
+        return res.status(403).json({ success: false, message: "Branch does not belong to your gym" });
+      }
+      if (req.tenant?.branchId && req.tenant.branchId !== branchId) {
+        return res.status(403).json({ success: false, message: "You do not have access to this branch" });
+      }
+    }
+
+    if (name !== undefined && (!name || !name.trim())) {
+      return res.status(400).json({
+        success: false,
+        message: "Plan name is required",
+      });
+    }
+
+    let validatedPrice = null;
+    if (price !== undefined && price !== null && price !== "") {
+      const priceCheck = validateMoney(price, { fieldName: "Plan price", allowZero: true });
+      if (!priceCheck.isValid) {
+        return res.status(400).json({
+          success: false,
+          message: priceCheck.error,
+        });
+      }
+      validatedPrice = priceCheck.parsedAmount;
+    }
+
+    if (durationDays !== undefined && durationDays !== null && durationDays !== "") {
+      const numDuration = parseInt(durationDays, 10);
+      if (isNaN(numDuration) || numDuration <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Plan duration must be at least 1 day",
+        });
+      }
+    }
+
+    let validatedFreezeFee = null;
+    if (freezeFee !== undefined && freezeFee !== null && freezeFee !== "") {
+      const feeCheck = validateMoney(freezeFee, { fieldName: "Freeze fee", allowZero: true });
+      if (!feeCheck.isValid) {
+        return res.status(400).json({
+          success: false,
+          message: feeCheck.error,
+        });
+      }
+      validatedFreezeFee = feeCheck.parsedAmount;
     }
 
     const result = await pool.query(
@@ -218,9 +392,10 @@ const updatePlan = async (req, res, next) => {
         duration_days = COALESCE($4::integer, duration_days),
         price = COALESCE($5::numeric, price),
         max_freeze_days = COALESCE($6::integer, max_freeze_days),
-        is_active = COALESCE($7::boolean, is_active),
+        freeze_fee = COALESCE($7::numeric, freeze_fee),
+        is_active = COALESCE($8::boolean, is_active),
         updated_at = NOW()
-      WHERE id = $8::uuid
+      WHERE id = $9::uuid
       RETURNING *
       `,
       [
@@ -228,8 +403,9 @@ const updatePlan = async (req, res, next) => {
         name?.trim() || null,
         description ?? null,
         durationDays ?? null,
-        price ?? null,
+        validatedPrice,
         maxFreezeDays ?? null,
+        validatedFreezeFee,
         isActive ?? null,
         id,
       ]
@@ -250,7 +426,35 @@ const updatePlan = async (req, res, next) => {
 // ======================================================
 const deletePlan = async (req, res, next) => {
   try {
+    if (!ALLOWED_MUTATE_ROLES.includes(req.user?.role_name)) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to deactivate membership plans",
+      });
+    }
+
     const { id } = req.params;
+
+    // Verify plan exists and belongs to tenant gym
+    const planCheck = await pool.query(
+      `SELECT p.id, b.gym_id, p.branch_id 
+       FROM membership_plans p 
+       JOIN branches b ON b.id = p.branch_id 
+       WHERE p.id = $1 LIMIT 1`,
+      [id]
+    );
+
+    if (
+      planCheck.rows.length === 0 ||
+      (req.tenant?.gymId && planCheck.rows[0].gym_id !== req.tenant.gymId)
+    ) {
+      return res.status(404).json({ success: false, message: "Membership plan not found" });
+    }
+
+    if (req.tenant?.branchId && planCheck.rows[0].branch_id !== req.tenant.branchId) {
+      return res.status(403).json({ success: false, message: "You do not have access to this plan" });
+    }
+
     const result = await pool.query(
       `
       UPDATE membership_plans
@@ -260,10 +464,6 @@ const deletePlan = async (req, res, next) => {
       `,
       [id]
     );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: "Membership plan not found" });
-    }
 
     return res.status(200).json({
       success: true,
@@ -282,11 +482,27 @@ const hardDeletePlan = async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    if (req.user.role_name !== "system-admin" && req.user.role_name !== "super-admin") {
+    if (req.user?.role_name !== "system-admin" && req.user?.role_name !== "super-admin") {
       return res.status(403).json({
         success: false,
         message: "You do not have permission to delete membership plans",
       });
+    }
+
+    // Verify plan exists and belongs to tenant gym
+    const planCheck = await pool.query(
+      `SELECT p.id, b.gym_id, p.branch_id 
+       FROM membership_plans p 
+       JOIN branches b ON b.id = p.branch_id 
+       WHERE p.id = $1 LIMIT 1`,
+      [id]
+    );
+
+    if (
+      planCheck.rows.length === 0 ||
+      (req.tenant?.gymId && planCheck.rows[0].gym_id !== req.tenant.gymId)
+    ) {
+      return res.status(404).json({ success: false, message: "Membership plan not found" });
     }
 
     const result = await pool.query(
@@ -307,9 +523,18 @@ const hardDeletePlan = async (req, res, next) => {
   }
 };
 
-
+// ======================================================
+// EXPORT MEMBERSHIP PLANS
+// ======================================================
 const exportPlans = async (req, res, next) => {
   try {
+    if (!ALLOWED_READ_ROLES.includes(req.user?.role_name)) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to export membership plans",
+      });
+    }
+
     const search = req.query.search || "";
     const branchId = req.query.branchId;
     const gymId = req.query.gymId;
@@ -318,21 +543,34 @@ const exportPlans = async (req, res, next) => {
     let dataParams = [];
     let conditions = [];
 
-    if (req.user.role_name === "admin") {
-      conditions.push(`b.manager_id = ${dataParams.length + 1}`);
-      dataParams.push(req.user.id);
+    // Tenant Gym Isolation
+    if (req.tenant?.gymId) {
+      conditions.push(`b.gym_id = $${dataParams.length + 1}`);
+      dataParams.push(req.tenant.gymId);
+    } else if (!req.tenant?.isSystemAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to export membership plans",
+      });
     }
 
-    if (gymId) {
-      conditions.push(`g.id = ${dataParams.length + 1}`);
+    // Shared branch-access helper (Day 2 Prompt 2)
+    const branchAccess = resolveBranchAccess(req);
+    if (branchAccess.type === "BRANCH" && branchAccess.branchId) {
+      conditions.push(`p.branch_id = $${dataParams.length + 1}`);
+      dataParams.push(branchAccess.branchId);
+    }
+
+    if (branchId && branchAccess.type !== "BRANCH") {
+      conditions.push(`p.branch_id = $${dataParams.length + 1}`);
+      dataParams.push(branchId);
+    } else if (gymId && req.tenant?.isSystemAdmin) {
+      conditions.push(`b.gym_id = $${dataParams.length + 1}`);
       dataParams.push(gymId);
     }
-    if (branchId) {
-      conditions.push(`b.id = ${dataParams.length + 1}`);
-      dataParams.push(branchId);
-    }
+
     if (search) {
-      conditions.push(`(p.name ILIKE ${dataParams.length + 1})`);
+      conditions.push(`p.name ILIKE $${dataParams.length + 1}`);
       dataParams.push(`%${search}%`);
     }
 
