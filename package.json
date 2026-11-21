@@ -7,7 +7,13 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
-    "seed:admin": "node src/seeder/seedAdmin.js"
+    "seed:admin": "node src/seeder/seedAdmin.js",
+    "seed:demo": "node src/seeder/seedDemo.js",
+    "migrate:indexes": "node src/scripts/run_day13_indexes_migration.js",
+    "backfill:invoices": "node src/scripts/backfill_invoices.js",
+    "db:backup": "node src/scripts/backup_db.js",
+    "db:restore": "node src/scripts/restore_db.js",
+    "db:clean:prod": "node src/scripts/run_production_cleanup.js"
   },
   "keywords": [],
   "author": "",
@@ -15,11 +21,16 @@
   "type": "commonjs",
   "dependencies": {
     "bcryptjs": "^3.0.3",
+    "compression": "^1.8.2",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.7.4",
+    "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.3",
+    "morgan": "^1.12.1",
+    "nodemailer": "^10.3.1",
     "pg": "^8.23.0"
   },
   "devDependencies": {
