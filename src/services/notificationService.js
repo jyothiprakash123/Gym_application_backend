@@ -8,7 +8,7 @@ class NotificationService {
     try {
       // MSG91 API configuration (placeholder for environment variables)
       const authKey = process.env.MSG91_AUTH_KEY || 'dummy_auth_key';
-      const senderId = process.env.MSG91_SENDER_ID || 'FITGYM';
+      const senderId = process.env.MSG91_SENDER_ID || 'FLZORA';
       const route = process.env.MSG91_ROUTE || '4'; // 4 for transactional
       
       // In a real implementation, you would make an axios call here
