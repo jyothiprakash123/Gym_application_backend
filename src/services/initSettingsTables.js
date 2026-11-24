@@ -108,6 +108,32 @@ const initSettingsTables = async () => {
       CREATE INDEX IF NOT EXISTS idx_messages_is_active ON messages (is_active);
     `);
 
+    // 3b. Create plan_access_requests table for storing pricing plan inquiries
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS plan_access_requests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        gym_name VARCHAR(255) NOT NULL,
+        full_name VARCHAR(255),
+        email VARCHAR(255) NOT NULL,
+        phone VARCHAR(50) NOT NULL,
+        plan_name VARCHAR(100) NOT NULL,
+        plan_id VARCHAR(100),
+        billing_cycle VARCHAR(50) DEFAULT 'yearly',
+        price NUMERIC(10, 2),
+        plan_details JSONB DEFAULT '{}'::jsonb,
+        notes TEXT,
+        status VARCHAR(50) NOT NULL DEFAULT 'pending',
+        created_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_gym_id UUID REFERENCES gyms(id) ON DELETE SET NULL,
+        admin_notes TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_plan_access_requests_status ON plan_access_requests (status);
+      CREATE INDEX IF NOT EXISTS idx_plan_access_requests_created_at ON plan_access_requests (created_at DESC);
+    `);
+
     // 4. Ensure Messages menu item exists in menu_items table
     const menuCheck = await pool.query("SELECT id FROM menu_items WHERE path = '/messages'");
     let messageMenuItemId;
@@ -130,6 +156,29 @@ const initSettingsTables = async () => {
         VALUES ($1, $2)
         ON CONFLICT DO NOTHING
       `, [roleRow.id, messageMenuItemId]);
+    }
+
+    // 4b. Ensure Access Requests menu item exists exclusively for system-admin
+    const accessReqMenuCheck = await pool.query("SELECT id FROM menu_items WHERE path = '/access-requests'");
+    let accessReqMenuItemId;
+    if (accessReqMenuCheck.rows.length === 0) {
+      const insertAccessReqMenu = await pool.query(`
+        INSERT INTO menu_items (id, type, path, icon, text, plan, required_role, sort_order)
+        VALUES (gen_random_uuid(), 'link', '/access-requests', 'Inbox', 'Access Requests', 'Starter', 'system-admin', 18)
+        RETURNING id
+      `);
+      accessReqMenuItemId = insertAccessReqMenu.rows[0].id;
+    } else {
+      accessReqMenuItemId = accessReqMenuCheck.rows[0].id;
+    }
+
+    const sysAdminRoleRes = await pool.query("SELECT id FROM roles WHERE name = 'system-admin'");
+    if (sysAdminRoleRes.rows.length > 0) {
+      await pool.query(`
+        INSERT INTO role_menu_items (role_id, menu_item_id)
+        VALUES ($1, $2)
+        ON CONFLICT DO NOTHING
+      `, [sysAdminRoleRes.rows[0].id, accessReqMenuItemId]);
     }
 
     // 5. Seed Common defaults in gym_module_configs if none exist

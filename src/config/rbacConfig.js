@@ -39,6 +39,7 @@ const PERMISSION_MATRIX = {
     branches:   { view: true, create: true, edit: true, delete: true },
     settings:   { view: true, create: true, edit: true, delete: true },
     gyms:       { view: true, create: true, edit: true, delete: true },
+    access_requests: { view: true, create: true, edit: true, delete: true },
     dashboard:  { view: true, create: false, edit: false, delete: false },
   },
 
