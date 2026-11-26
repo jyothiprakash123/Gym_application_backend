@@ -2,6 +2,7 @@ const bcrypt = require("bcryptjs");
 const pool = require("../config/db");
 const { resolveBranchAccess } = require("../middleware/tenantMiddleware");
 const { sanitizePhone, isValidPhone } = require("../utils/phoneValidation");
+const { appendCreatedAtDateFilter } = require("../utils/dateUtils");
 
 const isStrongPassword = (pwd) => {
   if (!pwd || typeof pwd !== "string" || pwd.length < 8) return false;
@@ -386,9 +387,20 @@ const getStaff = async (req, res, next) => {
       dataParams.push(searchStr);
     }
 
+    appendCreatedAtDateFilter(conditions, [countParams, dataParams], "s.created_at", req.query);
+
     if (conditions.length > 0) {
       baseQuery += ` WHERE ` + conditions.join(" AND ");
     }
+
+    const ALLOWED_SORT_FIELDS = {
+      full_name: "s.full_name",
+      branch_name: "b.name",
+      is_active: "s.is_active",
+      created_at: "s.created_at",
+    };
+    const sortField = ALLOWED_SORT_FIELDS[req.query.sort_by] || "s.created_at";
+    const sortDir = req.query.sort_dir === "asc" ? "ASC" : "DESC";
 
     // Total Count Query
     const countQuery = `SELECT COUNT(*) ${baseQuery}`;
@@ -420,7 +432,7 @@ const getStaff = async (req, res, next) => {
         s.created_at,
         s.updated_at
       ${baseQuery}
-      ORDER BY s.created_at DESC
+      ORDER BY ${sortField} ${sortDir}
       ${limitOffsetCondition}
     `;
 

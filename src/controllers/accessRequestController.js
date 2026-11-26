@@ -1,6 +1,7 @@
 const pool = require("../config/db");
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
+const { appendCreatedAtDateFilter } = require("../utils/dateUtils");
 
 /**
  * Generates a clean, secure temporary password meeting enterprise password policies:
@@ -173,6 +174,8 @@ const getAccessRequests = async (req, res, next) => {
       );
       queryParams.push(`%${search}%`);
     }
+
+    appendCreatedAtDateFilter(conditions, [queryParams], "r.created_at", req.query);
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 

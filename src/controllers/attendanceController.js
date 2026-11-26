@@ -1,6 +1,6 @@
 const pool = require("../config/db");
 const { resolveBranchAccess } = require("../middleware/tenantMiddleware");
-const { formatLocalDate, getTodayDateStr } = require("../utils/dateUtils");
+const { formatLocalDate, getTodayDateStr, appendCreatedAtDateFilter } = require("../utils/dateUtils");
 
 // ======================================================
 // CHECK IN MEMBER
@@ -720,6 +720,18 @@ const getAttendance = async (req, res, next) => {
         bulkBaseQuery += ` AND ${searchCondition}`;
         countParams.push(searchStr);
         dataParams.push(searchStr);
+      }
+
+      const createdConditions = [];
+      appendCreatedAtDateFilter(
+        createdConditions,
+        [countParams, dataParams],
+        "a.created_at",
+        req.query,
+        { date: "createdDate", startDate: "createdStartDate", endDate: "createdEndDate" }
+      );
+      if (createdConditions.length > 0) {
+        bulkBaseQuery += ` AND ${createdConditions.join(" AND ")}`;
       }
 
       const countQuery = `

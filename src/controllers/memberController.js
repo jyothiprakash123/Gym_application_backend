@@ -2,6 +2,7 @@ const pool = require("../config/db");
 const { resolveBranchAccess } = require("../middleware/tenantMiddleware");
 const notificationService = require("../services/notificationService");
 const { sanitizePhone, isValidPhone } = require("../utils/phoneValidation");
+const { buildCreatedAtWhereFragment } = require("../utils/dateUtils");
 const {
   expireOverdueMemberships,
   resumeExpiredFreezes,
@@ -397,6 +398,23 @@ const getMembers = async (req, res, next) => {
       hasWhere = true;
     }
 
+    // Created At Date / Range Filter
+    const createdClause = buildCreatedAtWhereFragment("m.created_at", req.query, [countParams, dataParams], hasWhere);
+    if (createdClause) {
+      baseQuery += createdClause;
+      hasWhere = true;
+    }
+
+    const ALLOWED_SORT_FIELDS = {
+      full_name: "m.full_name",
+      plan_name: "active_plan.plan_name",
+      expiry_date: "active_plan.expiry_date",
+      is_active: "m.is_active",
+      created_at: "m.created_at",
+    };
+    const sortField = ALLOWED_SORT_FIELDS[req.query.sort_by] || "m.created_at";
+    const sortDir = req.query.sort_dir === "asc" ? "ASC" : "DESC";
+
     // Total Count Query
     const countQuery = `SELECT COUNT(*) ${baseQuery}`;
     const countResult = await pool.query(countQuery, countParams);
@@ -440,7 +458,7 @@ const getMembers = async (req, res, next) => {
         active_plan.max_freeze_days,
         active_plan.plan_freeze_fee
       ${baseQuery}
-      ORDER BY m.created_at DESC
+      ORDER BY ${sortField} ${sortDir}
       ${limitOffsetCondition}
     `;
 

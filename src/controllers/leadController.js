@@ -2,6 +2,7 @@ const pool = require("../config/db");
 const { resolveBranchAccess } = require("../middleware/tenantMiddleware");
 const { sanitizePhone, isValidPhone } = require("../utils/phoneValidation");
 const notificationService = require("../services/notificationService");
+const { appendCreatedAtDateFilter } = require("../utils/dateUtils");
 
 const LEAD_STATUSES = ["New", "Contacted", "Follow-up", "Trial", "Converted", "Lost"];
 
@@ -240,6 +241,8 @@ const getLeads = async (req, res, next) => {
       countParams.push(searchStr);
       queryParams.push(searchStr);
     }
+
+    appendCreatedAtDateFilter(conditions, [countParams, queryParams], "l.created_at", req.query);
 
     if (conditions.length > 0) {
       baseQuery += ` WHERE ` + conditions.join(" AND ");

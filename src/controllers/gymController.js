@@ -118,6 +118,11 @@ const getGyms = async (req, res, next) => {
     const sortField = allowedSortFields.includes(sort_by) ? sort_by : "created_at";
 
     const gymId = req.query.gymId;
+    const status = req.query.status || null;
+    const date = req.query.date || null;
+    const startDate = req.query.startDate || null;
+    const endDate = req.query.endDate || null;
+    const isValidDateStr = (val) => typeof val === "string" && /^\d{4}-\d{2}-\d{2}$/.test(val);
 
     let baseQuery = `FROM gyms`;
     let conditions = [];
@@ -133,6 +138,32 @@ const getGyms = async (req, res, next) => {
       conditions.push(`id = $${countParams.length + 1}`);
       countParams.push(gymId);
       queryParams.push(gymId);
+    }
+
+    if (status === "active") {
+      conditions.push(`is_active = true`);
+    } else if (status === "inactive") {
+      conditions.push(`is_active = false`);
+    }
+
+    if (isValidDateStr(startDate) && isValidDateStr(endDate)) {
+      conditions.push(
+        `(created_at AT TIME ZONE 'Asia/Kolkata')::date BETWEEN $${countParams.length + 1}::date AND $${countParams.length + 2}::date`
+      );
+      countParams.push(startDate, endDate);
+      queryParams.push(startDate, endDate);
+    } else if (isValidDateStr(startDate)) {
+      conditions.push(`(created_at AT TIME ZONE 'Asia/Kolkata')::date >= $${countParams.length + 1}::date`);
+      countParams.push(startDate);
+      queryParams.push(startDate);
+    } else if (isValidDateStr(endDate)) {
+      conditions.push(`(created_at AT TIME ZONE 'Asia/Kolkata')::date <= $${countParams.length + 1}::date`);
+      countParams.push(endDate);
+      queryParams.push(endDate);
+    } else if (isValidDateStr(date)) {
+      conditions.push(`(created_at AT TIME ZONE 'Asia/Kolkata')::date = $${countParams.length + 1}::date`);
+      countParams.push(date);
+      queryParams.push(date);
     }
 
     if (search) {

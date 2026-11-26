@@ -1,4 +1,5 @@
 const pool = require("../config/db");
+const { appendCreatedAtDateFilter } = require("../utils/dateUtils");
 
 // ======================================================
 // CREATE MESSAGE
@@ -188,6 +189,8 @@ const getMessages = async (req, res, next) => {
       params.push(priority);
       conditions.push(`m.priority = $${params.length}`);
     }
+
+    appendCreatedAtDateFilter(conditions, [params], "m.created_at", req.query);
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
