@@ -1,33 +1,41 @@
 const pool = require("../config/db");
+const { appendCreatedAtDateFilter } = require("../utils/dateUtils");
 
 exports.getAchievements = async (req, res) => {
   try {
     const { search = "", page = 1, limit = 10 } = req.query;
     const offset = (page - 1) * limit;
 
-    let query = `
-      SELECT a.*, m.full_name as member_name, b.name as branch_name, g.name as gym_name
+    let baseFrom = `
       FROM achievements a
       LEFT JOIN members m ON a.member_id = m.id
       LEFT JOIN branches b ON m.branch_id = b.id
       LEFT JOIN gyms g ON b.gym_id = g.id
     `;
-    let countQuery = `
-      SELECT COUNT(*) 
-      FROM achievements a
-      LEFT JOIN members m ON a.member_id = m.id
-      LEFT JOIN branches b ON m.branch_id = b.id
-      LEFT JOIN gyms g ON b.gym_id = g.id
-    `;
+    const conditions = [];
     const params = [];
     const countParams = [];
 
     if (search) {
-      query += ` WHERE a.title ILIKE $1 OR m.full_name ILIKE $1`;
-      countQuery += ` WHERE a.title ILIKE $1 OR m.full_name ILIKE $1`;
+      conditions.push(`(a.title ILIKE $${params.length + 1} OR m.full_name ILIKE $${params.length + 1})`);
       params.push(`%${search}%`);
       countParams.push(`%${search}%`);
     }
+
+    appendCreatedAtDateFilter(conditions, [params, countParams], "a.created_at", req.query);
+
+    const whereClause = conditions.length > 0 ? ` WHERE ${conditions.join(" AND ")}` : "";
+
+    let query = `
+      SELECT a.*, m.full_name as member_name, b.name as branch_name, g.name as gym_name
+      ${baseFrom}
+      ${whereClause}
+    `;
+    let countQuery = `
+      SELECT COUNT(*) 
+      ${baseFrom}
+      ${whereClause}
+    `;
 
     query += ` ORDER BY a.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
     params.push(limit, offset);

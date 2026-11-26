@@ -7,6 +7,7 @@ const {
   getTodayDateStr,
   getNextDayStr,
   calculatePlanEndDate,
+  appendCreatedAtDateFilter,
 } = require("../utils/dateUtils");
 const { generateNextInvoiceNumber } = require("../utils/invoiceUtils");
 
@@ -452,6 +453,8 @@ const getPayments = async (req, res, next) => {
       countParams.push(searchStr);
       dataParams.push(searchStr);
     }
+
+    appendCreatedAtDateFilter(conditions, [countParams, dataParams], "p.created_at", req.query);
 
     if (conditions.length > 0) {
       baseQuery += ` WHERE ` + conditions.join(" AND ");

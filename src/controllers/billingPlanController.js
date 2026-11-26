@@ -1,4 +1,5 @@
 const pool = require("../config/db");
+const { appendCreatedAtDateFilter } = require("../utils/dateUtils");
 
 // ======================================================
 // CREATE BILLING PLAN
@@ -42,6 +43,8 @@ const getBillingPlans = async (req, res, next) => {
       conditions.push(`name ILIKE $${queryParams.length + 1}`);
       queryParams.push(`%${search}%`);
     }
+
+    appendCreatedAtDateFilter(conditions, [queryParams], "created_at", req.query);
 
     if (conditions.length > 0) {
       baseQuery += ` WHERE ` + conditions.join(" AND ");

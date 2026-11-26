@@ -3,6 +3,7 @@ const express = require("express");
 const {
   checkIn,
   markBulkAttendance,
+  updateBulkAttendance,
   checkOut,
   getAttendance,
   updateAttendance,
@@ -25,6 +26,17 @@ router.post(
   authenticate,
   authorizeRoles(...getAllowedRoles("attendance", "create")),
   markBulkAttendance
+);
+
+// ======================================================
+// BULK UPDATE ATTENDANCE
+// ======================================================
+
+router.put(
+  "/bulk",
+  authenticate,
+  authorizeRoles(...getAllowedRoles("attendance", "edit")),
+  updateBulkAttendance
 );
 
 // ======================================================

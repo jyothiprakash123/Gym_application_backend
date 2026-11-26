@@ -1,5 +1,6 @@
 const pool = require("../config/db");
 const { resolveBranchAccess, canUserAccessBranch } = require("../middleware/tenantMiddleware");
+const { appendCreatedAtDateFilter } = require("../utils/dateUtils");
 
 // ======================================================
 // CREATE BRANCH
@@ -241,9 +242,21 @@ const getBranches = async (req, res, next) => {
       dataParams.push(searchStr);
     }
 
+    appendCreatedAtDateFilter(conditions, [countParams, dataParams], "b.created_at", req.query);
+
     if (conditions.length > 0) {
       baseQuery += ` WHERE ` + conditions.join(" AND ");
     }
+
+    const ALLOWED_SORT_FIELDS = {
+      name: "b.name",
+      phone: "b.phone",
+      city: "b.city",
+      is_active: "b.is_active",
+      created_at: "b.created_at",
+    };
+    const sortField = ALLOWED_SORT_FIELDS[req.query.sort_by] || "b.created_at";
+    const sortDir = req.query.sort_dir === "asc" ? "ASC" : "DESC";
 
     // Total Count Query
     const countQuery = `SELECT COUNT(*) ${baseQuery}`;
@@ -272,7 +285,7 @@ const getBranches = async (req, res, next) => {
         b.updated_at,
         g.name as gym_name
       ${baseQuery}
-      ORDER BY b.created_at DESC
+      ORDER BY ${sortField} ${sortDir}
       ${limitOffsetCondition}
     `;
 

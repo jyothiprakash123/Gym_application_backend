@@ -25,6 +25,7 @@ const expenseRoutes = require("./routes/expenseRoutes");
 const billingPlanRoutes = require("./routes/billingPlanRoutes");
 const messageRoutes = require("./routes/messageRoutes");
 const invoiceRoutes = require("./routes/invoiceRoutes");
+const accessRequestRoutes = require("./routes/accessRequestRoutes");
 
 const authenticate = require("./middleware/authMiddleware");
 const authorizeRoles = require("./middleware/roleMiddleware");
@@ -237,6 +238,7 @@ app.use("/api/leads", leadRoutes);
 app.use("/api/expenses", expenseRoutes);
 app.use("/api/billing-plans", billingPlanRoutes);
 app.use("/api/messages", messageRoutes);
+app.use("/api/access-requests", accessRequestRoutes);
 
 // ======================================================
 // SUPER ADMIN TEST ROUTE

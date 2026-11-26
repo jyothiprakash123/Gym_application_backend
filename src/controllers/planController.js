@@ -1,6 +1,7 @@
 const pool = require("../config/db");
 const { resolveBranchAccess } = require("../middleware/tenantMiddleware");
 const { validateMoney } = require("../utils/financeUtils");
+const { appendCreatedAtDateFilter } = require("../utils/dateUtils");
 
 // ======================================================
 // ROLE PERMISSION CONSTANTS FOR MEMBERSHIP PLANS
@@ -192,9 +193,24 @@ const getPlans = async (req, res, next) => {
       dataParams.push(searchStr);
     }
 
+    appendCreatedAtDateFilter(conditions, [countParams, dataParams], "p.created_at", req.query);
+
     if (conditions.length > 0) {
       baseQuery += ` WHERE ` + conditions.join(" AND ");
     }
+
+    const ALLOWED_SORT_FIELDS = {
+      name: "p.name",
+      gym_name: "g.name",
+      branch_name: "b.name",
+      duration_days: "p.duration_days",
+      price: "p.price",
+      max_freeze_days: "p.max_freeze_days",
+      is_active: "p.is_active",
+      created_at: "p.created_at",
+    };
+    const sortField = ALLOWED_SORT_FIELDS[req.query.sort_by] || "p.created_at";
+    const sortDir = req.query.sort_dir === "asc" ? "ASC" : "DESC";
 
     const statsQuery = `
       SELECT 
@@ -213,7 +229,7 @@ const getPlans = async (req, res, next) => {
     const dataQuery = `
       SELECT p.*, b.name AS branch_name, g.name AS gym_name
       ${baseQuery}
-      ORDER BY p.created_at DESC
+      ORDER BY ${sortField} ${sortDir}
       ${limitOffsetCondition}
     `;
 

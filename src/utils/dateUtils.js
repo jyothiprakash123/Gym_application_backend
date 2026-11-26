@@ -148,6 +148,56 @@ const getDaysRemaining = (dateInput) => {
   return -getExpiryDiffDays(dateInput);
 };
 
+const isValidDateStr = (val) => typeof val === "string" && /^\d{4}-\d{2}-\d{2}$/.test(val);
+
+/**
+ * Appends a created_at date / date-range SQL condition to `conditions`
+ * and pushes matching parameters into every array in `paramsList`.
+ */
+const appendCreatedAtDateFilter = (conditions, paramsList, columnExpr, query = {}, keys = {}) => {
+  const dateKey = keys.date || "date";
+  const startKey = keys.startDate || "startDate";
+  const endKey = keys.endDate || "endDate";
+
+  const date = query[dateKey] || null;
+  const startDate = query[startKey] || null;
+  const endDate = query[endKey] || null;
+
+  const pushAll = (...vals) => {
+    for (const arr of paramsList) {
+      arr.push(...vals);
+    }
+  };
+
+  const baseIdx = paramsList[0].length;
+  if (isValidDateStr(startDate) && isValidDateStr(endDate)) {
+    conditions.push(
+      `(${columnExpr} AT TIME ZONE 'Asia/Kolkata')::date BETWEEN $${baseIdx + 1}::date AND $${baseIdx + 2}::date`
+    );
+    pushAll(startDate, endDate);
+  } else if (isValidDateStr(startDate)) {
+    conditions.push(`(${columnExpr} AT TIME ZONE 'Asia/Kolkata')::date >= $${baseIdx + 1}::date`);
+    pushAll(startDate);
+  } else if (isValidDateStr(endDate)) {
+    conditions.push(`(${columnExpr} AT TIME ZONE 'Asia/Kolkata')::date <= $${baseIdx + 1}::date`);
+    pushAll(endDate);
+  } else if (isValidDateStr(date)) {
+    conditions.push(`(${columnExpr} AT TIME ZONE 'Asia/Kolkata')::date = $${baseIdx + 1}::date`);
+    pushAll(date);
+  }
+};
+
+/**
+ * Builds an AND/WHERE SQL fragment for created_at date filtering when queries
+ * concatenate conditions directly onto a string instead of a `conditions` array.
+ */
+const buildCreatedAtWhereFragment = (columnExpr, query = {}, paramsList = [], hasWhere = true) => {
+  const conditions = [];
+  appendCreatedAtDateFilter(conditions, paramsList, columnExpr, query);
+  if (conditions.length === 0) return "";
+  return `${hasWhere ? " AND " : " WHERE "}${conditions[0]}`;
+};
+
 module.exports = {
   formatLocalDate,
   toLocalDateStr: formatLocalDate,
@@ -157,4 +207,6 @@ module.exports = {
   calculatePlanEndDate,
   getExpiryDiffDays,
   getDaysRemaining,
+  appendCreatedAtDateFilter,
+  buildCreatedAtWhereFragment,
 };

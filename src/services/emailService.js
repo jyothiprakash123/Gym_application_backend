@@ -1,7 +1,7 @@
 const nodemailer = require("nodemailer");
 
 /**
- * FitZone Email & SMTP Service
+ * Flezora Email & SMTP Service
  * Supports standard SMTP (Gmail, Outlook, SendGrid, Amazon SES, Mailgun, custom SMTP)
  * with a resilient development fallback if SMTP credentials are not yet set in .env.
  */
@@ -77,12 +77,12 @@ class EmailService {
         <div style="max-width: 600px; margin: 30px auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.06); border: 1px solid #e2e8f0;">
           
           <!-- Header -->
-          <div style="background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%); padding: 28px 24px; text-align: center;">
+          <div style="background: linear-gradient(135deg, #0047FF 0%, #00D2FF 100%); padding: 28px 24px; text-align: center;">
             <div style="font-size: 24px; font-weight: 800; color: #ffffff; letter-spacing: -0.5px; margin-bottom: 4px;">
-              FitZone Gyms
+              Flezora
             </div>
-            <div style="font-size: 13px; color: #bfdbfe; font-weight: 500;">
-              ${safeGymName || "FitZone Fitness Club"} • ${safeBranchName || "All Branches (Common Notice)"}
+            <div style="font-size: 13px; color: #e0f2fe; font-weight: 500;">
+              ${safeGymName || "Flezora Fitness Club"} • ${safeBranchName || "All Branches (Common Notice)"}
             </div>
           </div>
 
@@ -103,7 +103,7 @@ class EmailService {
               ${safeTitle}
             </h1>
 
-            <div style="background-color: #f8fafc; border-left: 4px solid #2563eb; padding: 18px 20px; border-radius: 0 8px 8px 0; margin-bottom: 24px;">
+            <div style="background-color: #f8fafc; border-left: 4px solid #0080FF; padding: 18px 20px; border-radius: 0 8px 8px 0; margin-bottom: 24px;">
               <p style="font-size: 14.5px; line-height: 1.6; color: #334155; margin: 0; white-space: pre-line;">
                 ${safeContent}
               </p>
@@ -116,8 +116,8 @@ class EmailService {
 
           <!-- Footer -->
           <div style="background-color: #f1f5f9; padding: 18px 24px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8;">
-            <p style="margin: 0 0 4px 0;">This is an automated announcement sent to active members of FitZone Gyms.</p>
-            <p style="margin: 0;">© ${new Date().getFullYear()} FitZone Gyms SaaS. All rights reserved.</p>
+            <p style="margin: 0 0 4px 0;">This is an automated announcement sent to active members of Flezora.</p>
+            <p style="margin: 0;">© ${new Date().getFullYear()} Flezora SaaS. All rights reserved.</p>
           </div>
 
         </div>
@@ -152,13 +152,13 @@ class EmailService {
       fromEmail ||
       process.env.SMTP_FROM ||
       (process.env.MAIL_FROM_EMAIL
-        ? `"${process.env.MAIL_FROM_NAME || "FitZone Gyms"}" <${process.env.MAIL_FROM_EMAIL}>`
+        ? `"${process.env.MAIL_FROM_NAME || "Flezora"}" <${process.env.MAIL_FROM_EMAIL}>`
         : null) ||
       (process.env.SMTP_USER
-        ? `"${process.env.MAIL_FROM_NAME || "FitZone Gyms"}" <${process.env.SMTP_USER}>`
+        ? `"${process.env.MAIL_FROM_NAME || "Flezora"}" <${process.env.SMTP_USER}>`
         : null) ||
-      '"FitZone Gyms" <notifications@fitzone.com>';
-    const emailSubject = `[FitZone Notice] ${title}`;
+      '"Flezora" <notifications@flezora.com>';
+    const emailSubject = `[Flezora Notice] ${title}`;
 
     let sentCount = 0;
     const errors = [];
@@ -181,7 +181,7 @@ class EmailService {
         from: sender,
         to: `"${recipient.name || "Member"}" <${recipient.email}>`,
         subject: emailSubject,
-        text: `${title}\n\n${content}\n\nFitZone Gyms Notice`,
+        text: `${title}\n\n${content}\n\nFlezora Notice`,
         html,
       };
 

@@ -2,6 +2,7 @@ const pool = require("../config/db");
 const { resolveBranchAccess } = require("../middleware/tenantMiddleware");
 const { hasPermission } = require("../config/rbacConfig");
 const { validateMoney, MAX_MONEY_AMOUNT } = require("../utils/financeUtils");
+const { appendCreatedAtDateFilter } = require("../utils/dateUtils");
 
 const ALLOWED_CATEGORIES = ["Rent", "Electricity", "Maintenance", "Salaries", "Other"];
 
@@ -92,6 +93,8 @@ const getExpenses = async (req, res, next) => {
       countParams.push(`%${search}%`);
       queryParams.push(`%${search}%`);
     }
+
+    appendCreatedAtDateFilter(conditions, [countParams, queryParams], "e.created_at", req.query);
 
     if (conditions.length > 0) {
       baseQuery += ` WHERE ` + conditions.join(" AND ");

@@ -1,6 +1,7 @@
 const pool = require("../config/db");
 const bcrypt = require("bcryptjs");
 const { validatePasswordStrength } = require("../utils/passwordPolicy");
+const { buildCreatedAtWhereFragment } = require("../utils/dateUtils");
 
 // ======================================================
 // GET ROLES
@@ -153,6 +154,7 @@ const getAllUsers = async (req, res, next) => {
       return res.status(403).json({ success: false, message: "Forbidden" });
     }
 
+    query += buildCreatedAtWhereFragment("u.created_at", req.query, [queryParams], true);
     query += ` ORDER BY u.created_at DESC`;
 
     const result = await pool.query(query, queryParams);

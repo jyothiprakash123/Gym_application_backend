@@ -1,6 +1,6 @@
 const pool = require("../config/db");
 const { resolveBranchAccess } = require("../middleware/tenantMiddleware");
-const { formatLocalDate, getTodayDateStr } = require("../utils/dateUtils");
+const { formatLocalDate, getTodayDateStr, appendCreatedAtDateFilter } = require("../utils/dateUtils");
 
 // ======================================================
 // CHECK IN MEMBER
@@ -228,10 +228,10 @@ const checkIn = async (req, res, next) => {
 };
 
 // ======================================================
-// BULK MARK ATTENDANCE
+// BULK MARK / UPDATE ATTENDANCE (SHARED HELPER)
 // ======================================================
 
-const markBulkAttendance = async (req, res, next) => {
+const processBulkAttendance = async (req, res, next, { isEdit = false } = {}) => {
   const client = await pool.connect();
   try {
     const { branchId, attendanceDate, records } = req.body;
@@ -361,7 +361,7 @@ const markBulkAttendance = async (req, res, next) => {
       };
     });
 
-    // 5. If any member being marked present (status = 1) is currently frozen or expired on dateVal, block
+    // 5. If any member being marked present (status = 1) is frozen or expired on dateVal, block
     const presentMemberIds = formattedRecords
       .filter((r) => r.status === 1)
       .map((r) => r.member_id);
@@ -373,7 +373,7 @@ const markBulkAttendance = async (req, res, next) => {
          JOIN members m ON m.id = mm.member_id
          WHERE mm.member_id = ANY($1::uuid[]) 
            AND (
-             mm.status = 'on_hold' 
+             (mm.status = 'on_hold' AND (mm.freeze_start IS NULL OR $2::date >= mm.freeze_start))
              OR (mm.freeze_start IS NOT NULL AND mm.freeze_end IS NOT NULL AND $2::date >= mm.freeze_start AND $2::date <= mm.freeze_end)
            )`,
         [presentMemberIds, dateVal]
@@ -387,29 +387,53 @@ const markBulkAttendance = async (req, res, next) => {
         });
       }
 
-      // Check expired members or members without active plan on dateVal
+      // Check expired members or members without valid plan on dateVal
       const membershipCheck = await client.query(
         `SELECT m.id AS member_id, m.full_name,
-           (SELECT mm.status FROM member_memberships mm 
-            WHERE mm.member_id = m.id 
-            ORDER BY 
-              CASE WHEN mm.status = 'active' AND mm.end_date >= $2::date THEN 1 ELSE 2 END ASC,
-              mm.end_date DESC LIMIT 1) as active_status,
-           (SELECT mm.end_date FROM member_memberships mm 
-            WHERE mm.member_id = m.id 
-            ORDER BY mm.end_date DESC LIMIT 1) as end_date
+           COALESCE(
+             (SELECT mm.status FROM member_memberships mm
+              WHERE mm.member_id = m.id
+                AND mm.end_date >= $2::date
+                AND (mm.start_date IS NULL OR mm.start_date <= $2::date)
+                AND (
+                  mm.status = 'active'
+                  OR ($2::date < $3::date AND mm.status = 'expired')
+                )
+              ORDER BY mm.end_date DESC LIMIT 1),
+             (SELECT mm.status FROM member_memberships mm
+              WHERE mm.member_id = m.id
+              ORDER BY mm.end_date DESC LIMIT 1)
+           ) AS active_status,
+           COALESCE(
+             (SELECT mm.end_date FROM member_memberships mm
+              WHERE mm.member_id = m.id
+                AND mm.end_date >= $2::date
+                AND (mm.start_date IS NULL OR mm.start_date <= $2::date)
+                AND (
+                  mm.status = 'active'
+                  OR ($2::date < $3::date AND mm.status = 'expired')
+                )
+              ORDER BY mm.end_date DESC LIMIT 1),
+             (SELECT mm.end_date FROM member_memberships mm
+              WHERE mm.member_id = m.id
+              ORDER BY mm.end_date DESC LIMIT 1)
+           ) AS end_date
          FROM members m
          WHERE m.id = ANY($1::uuid[])`,
-        [presentMemberIds, dateVal]
+        [presentMemberIds, dateVal, todayStr]
       );
 
-      const expiredMembers = membershipCheck.rows.filter(
-        (r) => !r.active_status || r.active_status !== 'active' || (r.end_date && formatLocalDate(r.end_date) < dateVal)
-      );
+      const expiredMembers = membershipCheck.rows.filter((r) => {
+        const endStr = r.end_date ? formatLocalDate(r.end_date) : null;
+        const isHistoricalValid =
+          dateVal < todayStr && r.active_status === "expired" && endStr && endStr >= dateVal;
+        if (isHistoricalValid) return false;
+        return !r.active_status || r.active_status !== "active" || (endStr && endStr < dateVal);
+      });
 
       if (expiredMembers.length > 0) {
         const expiredNames = expiredMembers
-          .map((r) => `${r.full_name} (${r.end_date ? 'expired ' + formatLocalDate(r.end_date) : 'no plan'})`)
+          .map((r) => `${r.full_name} (${r.end_date ? "expired " + formatLocalDate(r.end_date) : "no plan"})`)
           .join(", ");
         return res.status(400).json({
           success: false,
@@ -468,7 +492,9 @@ const markBulkAttendance = async (req, res, next) => {
 
     return res.status(200).json({
       success: true,
-      message: `Attendance marked successfully for ${result.rows.length} member(s)`,
+      message: isEdit
+        ? `Attendance updated successfully for ${result.rows.length} member(s)`
+        : `Attendance marked successfully for ${result.rows.length} member(s)`,
       data: {
         count: result.rows.length,
         attendanceDate: dateVal,
@@ -481,6 +507,18 @@ const markBulkAttendance = async (req, res, next) => {
   } finally {
     client.release();
   }
+};
+
+const markBulkAttendance = async (req, res, next) => {
+  return processBulkAttendance(req, res, next, { isEdit: false });
+};
+
+// ======================================================
+// UPDATE BULK ATTENDANCE
+// ======================================================
+
+const updateBulkAttendance = async (req, res, next) => {
+  return processBulkAttendance(req, res, next, { isEdit: true });
 };
 
 // ======================================================
@@ -682,6 +720,18 @@ const getAttendance = async (req, res, next) => {
         bulkBaseQuery += ` AND ${searchCondition}`;
         countParams.push(searchStr);
         dataParams.push(searchStr);
+      }
+
+      const createdConditions = [];
+      appendCreatedAtDateFilter(
+        createdConditions,
+        [countParams, dataParams],
+        "a.created_at",
+        req.query,
+        { date: "createdDate", startDate: "createdStartDate", endDate: "createdEndDate" }
+      );
+      if (createdConditions.length > 0) {
+        bulkBaseQuery += ` AND ${createdConditions.join(" AND ")}`;
       }
 
       const countQuery = `
@@ -1050,6 +1100,7 @@ const deleteBulkAttendance = async (req, res, next) => {
 module.exports = {
   checkIn,
   markBulkAttendance,
+  updateBulkAttendance,
   checkOut,
   getAttendance,
   updateAttendance,
