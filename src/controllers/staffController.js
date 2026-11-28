@@ -270,10 +270,11 @@ const createStaff = async (req, res, next) => {
         designation,
         salary,
         joining_date,
-        is_active
+        is_active,
+        created_by
       )
       VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, true
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, true, $10
       )
       RETURNING
         id,
@@ -287,6 +288,7 @@ const createStaff = async (req, res, next) => {
         salary,
         joining_date,
         is_active,
+        created_by,
         created_at,
         updated_at
       `,
@@ -300,6 +302,7 @@ const createStaff = async (req, res, next) => {
         finalDesignation,
         salary || null,
         joiningDate || null,
+        req.user?.id || null,
       ]
     );
     const newStaff = result.rows[0];
@@ -343,7 +346,7 @@ const getStaff = async (req, res, next) => {
     const search = req.query.search || "";
     const offset = (page - 1) * limit;
 
-    let baseQuery = `FROM staff s LEFT JOIN branches b ON b.id = s.branch_id LEFT JOIN gyms g ON g.id = b.gym_id LEFT JOIN roles r ON r.id = s.role_id`;
+    let baseQuery = `FROM staff s LEFT JOIN branches b ON b.id = s.branch_id LEFT JOIN gyms g ON g.id = b.gym_id LEFT JOIN roles r ON r.id = s.role_id LEFT JOIN users cb ON cb.id = s.created_by`;
     let countParams = [];
     let dataParams = [];
     let conditions = [];
@@ -429,6 +432,8 @@ const getStaff = async (req, res, next) => {
         s.salary,
         s.joining_date,
         s.is_active,
+        s.created_by,
+        cb.full_name AS created_by_name,
         s.created_at,
         s.updated_at
       ${baseQuery}
@@ -480,6 +485,8 @@ const getStaffById = async (req, res, next) => {
         s.salary,
         s.joining_date,
         s.is_active,
+        s.created_by,
+        cb.full_name AS created_by_name,
         s.created_at,
         s.updated_at
       FROM staff s

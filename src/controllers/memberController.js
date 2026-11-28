@@ -15,7 +15,8 @@ const {
 const createMember = async (req, res, next) => {
   try {
     const {
-      branchId,
+      gymId: clientGymId,
+      branchId: rawBranchId,
       referredBy,
       dateOfBirth,
       gender,
@@ -30,10 +31,10 @@ const createMember = async (req, res, next) => {
       joinDate,
     } = req.body;
 
-    if (!branchId || !fullName || !fullName.trim() || !phone) {
+    if (!fullName || !fullName.trim() || !phone) {
       return res.status(400).json({
         success: false,
-        message: "Branch, full name and phone are required",
+        message: "Full name and phone are required",
       });
     }
 
@@ -90,18 +91,77 @@ const createMember = async (req, res, next) => {
       }
     }
 
-    const branchResult = await pool.query(
-      `
-      SELECT
-        id,
-        gym_id,
-        is_active
-      FROM branches
-      WHERE id = $1
-      LIMIT 1
-      `,
-      [branchId]
-    );
+    // Resolve branchId: use explicit branchId if provided, otherwise fall back to the gym's
+    // first active branch or auto-create a default "Main Branch" for Starter/single-location gyms.
+    let branchId = rawBranchId || req.tenant?.branchId || null;
+    let branchResult;
+
+    if (!branchId) {
+      const effectiveGymId = req.tenant?.gymId || (req.tenant?.isSystemAdmin ? clientGymId : null);
+      if (!effectiveGymId) {
+        return res.status(400).json({
+          success: false,
+          message: "Branch or Gym is required",
+        });
+      }
+
+      const existingBranchRes = await pool.query(
+        `
+        SELECT id, gym_id, is_active
+        FROM branches
+        WHERE gym_id = $1 AND is_active = true
+        ORDER BY created_at ASC
+        LIMIT 1
+        `,
+        [effectiveGymId]
+      );
+
+      if (existingBranchRes.rows.length > 0) {
+        branchResult = existingBranchRes;
+        branchId = existingBranchRes.rows[0].id;
+      } else {
+        const gymCheck = await pool.query(
+          `SELECT id, email, phone, city, is_active FROM gyms WHERE id = $1 LIMIT 1`,
+          [effectiveGymId]
+        );
+        if (gymCheck.rows.length === 0) {
+          return res.status(404).json({
+            success: false,
+            message: "Gym not found",
+          });
+        }
+        if (!gymCheck.rows[0].is_active) {
+          return res.status(400).json({
+            success: false,
+            message: "Cannot create member in an inactive gym",
+          });
+        }
+
+        const g = gymCheck.rows[0];
+        branchResult = await pool.query(
+          `
+          INSERT INTO branches (gym_id, name, phone, email, city, is_active)
+          VALUES ($1, 'Main Branch', $2, $3, $4, true)
+          RETURNING id, gym_id, is_active
+          `,
+          [effectiveGymId, g.phone || null, g.email || null, g.city || null]
+        );
+        branchId = branchResult.rows[0].id;
+      }
+    } else {
+      branchResult = await pool.query(
+        `
+        SELECT
+          id,
+          gym_id,
+          is_active
+        FROM branches
+        WHERE id = $1
+        LIMIT 1
+        `,
+        [branchId]
+      );
+    }
 
     if (branchResult.rows.length === 0) {
       return res.status(404).json({
@@ -173,11 +233,12 @@ const createMember = async (req, res, next) => {
         email,
         phone,
         health_notes,
-        join_date
+        join_date,
+        created_by
       )
       VALUES (
         $1, $2, $3, $4, $5, $6,
-        $7, $8, $9, $10, $11, $12, $13
+        $7, $8, $9, $10, $11, $12, $13, $14
       )
       RETURNING
         id,
@@ -195,6 +256,7 @@ const createMember = async (req, res, next) => {
         phone,
         health_notes,
         join_date,
+        created_by,
         is_active,
         created_at,
         updated_at
@@ -213,6 +275,7 @@ const createMember = async (req, res, next) => {
         cleanPhone,
         healthNotes ?? null,
         joinDate ?? null,
+        req.user?.id || null,
       ]
     );
 
@@ -287,6 +350,7 @@ const getMembers = async (req, res, next) => {
     let baseQuery = `FROM members m 
     LEFT JOIN branches b ON b.id = m.branch_id 
     LEFT JOIN gyms g ON g.id = b.gym_id
+    LEFT JOIN users cb ON cb.id = m.created_by
     LEFT JOIN LATERAL (
       SELECT 
         mp.name as plan_name, 
@@ -446,6 +510,8 @@ const getMembers = async (req, res, next) => {
         m.health_notes,
         m.join_date,
         m.is_active,
+        m.created_by,
+        cb.full_name AS created_by_name,
         m.created_at,
         m.updated_at,
         active_plan.plan_name,
@@ -496,6 +562,7 @@ const exportMembers = async (req, res, next) => {
     let baseQuery = `FROM members m 
     LEFT JOIN branches b ON b.id = m.branch_id 
     LEFT JOIN gyms g ON g.id = b.gym_id
+    LEFT JOIN users cb ON cb.id = m.created_by
     LEFT JOIN LATERAL (
       SELECT 
         mp.name as plan_name, 
@@ -1026,6 +1093,8 @@ const getMemberById = async (req, res, next) => {
         m.health_notes,
         m.join_date,
         m.is_active,
+        m.created_by,
+        cb.full_name AS created_by_name,
         m.created_at,
         m.updated_at,
         active_plan.plan_name,

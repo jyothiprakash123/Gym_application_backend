@@ -54,11 +54,12 @@ const createGym = async (req, res, next) => {
         city,
         state,
         country,
-        billing_plan_id
+        billing_plan_id,
+        created_by
       )
       VALUES (
         $1, $2, $3, $4,
-        $5, $6, $7, $8, $9
+        $5, $6, $7, $8, $9, $10
       )
       RETURNING
         id,
@@ -71,6 +72,7 @@ const createGym = async (req, res, next) => {
         state,
         country,
         billing_plan_id,
+        created_by,
         is_active,
         created_at,
         updated_at
@@ -85,6 +87,34 @@ const createGym = async (req, res, next) => {
         state || null,
         country || null,
         billingPlanId || null,
+        req.user.id,
+      ]
+    );
+
+    const createdGym = result.rows[0];
+
+    // Automatically provision a default "Main Branch" so single-location / Starter gyms
+    // can immediately add plans, members, payments, and attendance.
+    const defaultBranchRes = await pool.query(
+      `
+      INSERT INTO branches (
+        gym_id,
+        name,
+        phone,
+        email,
+        city,
+        is_active,
+        created_by
+      )
+      VALUES ($1, 'Main Branch', $2, $3, $4, true, $5)
+      RETURNING id, name, gym_id, is_active
+      `,
+      [
+        createdGym.id,
+        phone || null,
+        email ? email.trim().toLowerCase() : null,
+        city || null,
+        req.user.id,
       ]
     );
 
@@ -92,7 +122,8 @@ const createGym = async (req, res, next) => {
       success: true,
       message: "Gym created successfully",
       data: {
-        gym: result.rows[0],
+        gym: createdGym,
+        defaultBranch: defaultBranchRes.rows[0],
       },
     });
   } catch (error) {
@@ -192,6 +223,7 @@ const getGyms = async (req, res, next) => {
         country,
         billing_plan_id,
         (SELECT name FROM billing_plans WHERE id = gyms.billing_plan_id) AS billing_plan_name,
+        (SELECT full_name FROM users WHERE id = COALESCE(gyms.created_by, gyms.owner_id)) AS created_by_name,
         is_active,
         created_at,
         updated_at

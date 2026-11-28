@@ -661,6 +661,7 @@ const getAttendance = async (req, res, next) => {
         FROM attendance a 
         JOIN branches b ON b.id = a.branch_id
         LEFT JOIN gyms g ON g.id = b.gym_id
+        LEFT JOIN users u ON u.id = a.marked_by
         WHERE 1=1
       `;
       let countParams = [];
@@ -757,7 +758,8 @@ const getAttendance = async (req, res, next) => {
           COUNT(a.id)::int AS total_count,
           COUNT(CASE WHEN a.status = 1 THEN 1 END)::int AS present_count,
           COUNT(CASE WHEN a.status = 0 THEN 1 END)::int AS absent_count,
-          MAX(a.created_at) AS created_at
+          MAX(a.created_at) AS created_at,
+          (ARRAY_AGG(u.full_name ORDER BY a.created_at DESC) FILTER (WHERE u.full_name IS NOT NULL))[1] AS marked_by_name
         ${bulkBaseQuery}
         GROUP BY a.branch_id, b.name, g.name, a.attendance_date
         ORDER BY a.attendance_date DESC, MAX(a.created_at) DESC

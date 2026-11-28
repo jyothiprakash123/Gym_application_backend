@@ -21,12 +21,12 @@ const createPlan = async (req, res, next) => {
       });
     }
 
-    const { branchId, name, description, durationDays, price, maxFreezeDays, freezeFee } = req.body;
+    const { gymId: clientGymId, branchId: rawBranchId, name, description, durationDays, price, maxFreezeDays, freezeFee } = req.body;
 
-    if (!branchId || !name || !name.trim() || durationDays === undefined || price === undefined) {
+    if (!name || !name.trim() || durationDays === undefined || price === undefined) {
       return res.status(400).json({
         success: false,
-        message: "Branch ID, name, duration (days), and price are required",
+        message: "Name, duration (days), and price are required",
       });
     }
 
@@ -59,13 +59,51 @@ const createPlan = async (req, res, next) => {
       numFreezeFee = feeCheck.parsedAmount;
     }
 
-    // 1. Validate branch ownership
-    const branchResult = await pool.query(
-      `
-      SELECT id, gym_id, is_active FROM branches WHERE id = $1 LIMIT 1
-      `,
-      [branchId]
-    );
+    // 1. Resolve & validate branch ownership (auto-resolve or create Main Branch if omitted)
+    let branchId = rawBranchId || req.tenant?.branchId || null;
+    let branchResult;
+
+    if (!branchId) {
+      const effectiveGymId = req.tenant?.gymId || (req.tenant?.isSystemAdmin ? clientGymId : null);
+      if (!effectiveGymId) {
+        return res.status(400).json({
+          success: false,
+          message: "Branch or Gym is required",
+        });
+      }
+
+      const existingBranchRes = await pool.query(
+        `SELECT id, gym_id, is_active FROM branches WHERE gym_id = $1 AND is_active = true ORDER BY created_at ASC LIMIT 1`,
+        [effectiveGymId]
+      );
+
+      if (existingBranchRes.rows.length > 0) {
+        branchResult = existingBranchRes;
+        branchId = existingBranchRes.rows[0].id;
+      } else {
+        const gymCheck = await pool.query(
+          `SELECT id, email, phone, city, is_active FROM gyms WHERE id = $1 LIMIT 1`,
+          [effectiveGymId]
+        );
+        if (gymCheck.rows.length === 0) {
+          return res.status(404).json({ success: false, message: "Gym not found" });
+        }
+        if (!gymCheck.rows[0].is_active) {
+          return res.status(400).json({ success: false, message: "Gym is inactive" });
+        }
+        const g = gymCheck.rows[0];
+        branchResult = await pool.query(
+          `INSERT INTO branches (gym_id, name, phone, email, city, is_active) VALUES ($1, 'Main Branch', $2, $3, $4, true) RETURNING id, gym_id, is_active`,
+          [effectiveGymId, g.phone || null, g.email || null, g.city || null]
+        );
+        branchId = branchResult.rows[0].id;
+      }
+    } else {
+      branchResult = await pool.query(
+        `SELECT id, gym_id, is_active FROM branches WHERE id = $1 LIMIT 1`,
+        [branchId]
+      );
+    }
 
     if (branchResult.rows.length === 0) {
       return res.status(404).json({
@@ -106,9 +144,10 @@ const createPlan = async (req, res, next) => {
         duration_days,
         price,
         max_freeze_days,
-        freeze_fee
+        freeze_fee,
+        created_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING *
       `,
       [
@@ -119,6 +158,7 @@ const createPlan = async (req, res, next) => {
         price,
         maxFreezeDays ?? 0,
         numFreezeFee,
+        req.user?.id || null,
       ]
     );
 
@@ -151,7 +191,7 @@ const getPlans = async (req, res, next) => {
     const gymId = req.query.gymId;
     const offset = (page - 1) * limit;
 
-    let baseQuery = `FROM membership_plans p LEFT JOIN branches b ON p.branch_id = b.id LEFT JOIN gyms g ON g.id = b.gym_id`;
+    let baseQuery = `FROM membership_plans p LEFT JOIN branches b ON p.branch_id = b.id LEFT JOIN gyms g ON g.id = b.gym_id LEFT JOIN users cb ON cb.id = p.created_by`;
     let countParams = [];
     let dataParams = [];
     let conditions = [];
@@ -227,7 +267,7 @@ const getPlans = async (req, res, next) => {
     const limitOffsetCondition = ` LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`;
 
     const dataQuery = `
-      SELECT p.*, b.name AS branch_name, g.name AS gym_name
+      SELECT p.*, b.name AS branch_name, g.name AS gym_name, cb.full_name AS created_by_name
       ${baseQuery}
       ORDER BY ${sortField} ${sortDir}
       ${limitOffsetCondition}
@@ -555,7 +595,7 @@ const exportPlans = async (req, res, next) => {
     const branchId = req.query.branchId;
     const gymId = req.query.gymId;
 
-    let baseQuery = `FROM membership_plans p LEFT JOIN branches b ON p.branch_id = b.id LEFT JOIN gyms g ON g.id = b.gym_id`;
+    let baseQuery = `FROM membership_plans p LEFT JOIN branches b ON p.branch_id = b.id LEFT JOIN gyms g ON g.id = b.gym_id LEFT JOIN users cb ON cb.id = p.created_by`;
     let dataParams = [];
     let conditions = [];
 
