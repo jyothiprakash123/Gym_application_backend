@@ -15,13 +15,6 @@ const {
 } = require("../config/cookieConfig");
 
 // ======================================================
-// COOKIE OPTIONS (Dynamic getters adhering to cookieConfig)
-// ======================================================
-
-const refreshCookieOptions = getRefreshCookieOptions();
-const accessCookieOptions = getAccessCookieOptions();
-
-// ======================================================
 // LOGIN
 // ======================================================
 

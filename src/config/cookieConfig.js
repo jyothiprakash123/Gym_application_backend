@@ -22,17 +22,22 @@
  */
 const getBaseCookieOptions = () => {
   const isProd = process.env.NODE_ENV === "production";
+  const cookieDomain = process.env.COOKIE_DOMAIN
+    ? process.env.COOKIE_DOMAIN.trim()
+    : "";
 
   // Determine sameSite setting:
-  // In production cross-site scenarios, defaults to "none".
-  // In development (localhost HTTP), defaults to "lax" so cookies function without HTTPS.
-  let sameSite = (
-    process.env.COOKIE_SAMESITE || (isProd ? "none" : "lax")
-  ).toLowerCase();
+  // - If COOKIE_SAMESITE is explicitly set, respect it.
+  // - If COOKIE_DOMAIN is set in production (e.g. .flezora.com for app.flezora.com & api.flezora.com),
+  //   default to "lax" so iOS WebKit ITP treats cookies as strictly first-party.
+  // - Otherwise in production cross-site deployments, default to "none".
+  // - In development (localhost HTTP), default to "lax".
+  const defaultSameSite = isProd ? (cookieDomain ? "lax" : "none") : "lax";
+  let sameSite = (process.env.COOKIE_SAMESITE || defaultSameSite).toLowerCase();
 
   // Validate sameSite value
   if (!["none", "lax", "strict"].includes(sameSite)) {
-    sameSite = isProd ? "none" : "lax";
+    sameSite = defaultSameSite;
   }
 
   // Determine secure setting:
@@ -61,9 +66,9 @@ const getBaseCookieOptions = () => {
     path: "/",
   };
 
-  // Optional: Set cookie domain if parent domain is shared (e.g. .fitzone.com)
-  if (process.env.COOKIE_DOMAIN) {
-    options.domain = process.env.COOKIE_DOMAIN;
+  // Set shared parent domain when frontend & backend share a root domain (e.g. .flezora.com)
+  if (cookieDomain) {
+    options.domain = cookieDomain;
   }
 
   return options;
