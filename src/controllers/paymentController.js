@@ -406,6 +406,7 @@ const getPayments = async (req, res, next) => {
       LEFT JOIN member_memberships mm ON p.membership_id = mm.id
       LEFT JOIN membership_plans mp ON mm.plan_id = mp.id
       LEFT JOIN invoices inv ON inv.payment_id = p.id
+      LEFT JOIN users cb ON cb.id = p.created_by
     `;
     let countParams = [];
     let dataParams = [];
@@ -479,7 +480,8 @@ const getPayments = async (req, res, next) => {
         mm.end_date,
         inv.id AS invoice_id,
         inv.invoice_number,
-        inv.status AS invoice_status
+        inv.status AS invoice_status,
+        cb.full_name AS created_by_name
       ${baseQuery}
       ORDER BY p.payment_date DESC, p.created_at DESC
       ${limitOffsetCondition}

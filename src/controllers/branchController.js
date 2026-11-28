@@ -143,11 +143,12 @@ const createBranch = async (req, res, next) => {
         phone,
         email,
         opening_time,
-        closing_time
+        closing_time,
+        created_by
       )
       VALUES (
         $1, $2, $3, $4, $5,
-        $6, $7, $8, $9
+        $6, $7, $8, $9, $10
       )
       RETURNING
         id,
@@ -161,6 +162,7 @@ const createBranch = async (req, res, next) => {
         opening_time,
         closing_time,
         is_active,
+        created_by,
         created_at,
         updated_at
       `,
@@ -174,6 +176,7 @@ const createBranch = async (req, res, next) => {
         email ? email.trim().toLowerCase() : null,
         openingTime || null,
         closingTime || null,
+        req.user?.id || null,
       ]
     );
 
@@ -201,7 +204,7 @@ const getBranches = async (req, res, next) => {
     const gymId = req.query.gymId;
     const offset = (page - 1) * limit;
 
-    let baseQuery = `FROM branches b LEFT JOIN gyms g ON b.gym_id = g.id`;
+    let baseQuery = `FROM branches b LEFT JOIN gyms g ON b.gym_id = g.id LEFT JOIN users cb ON cb.id = b.created_by`;
     let countParams = [];
     let dataParams = [];
     let conditions = [];
@@ -281,6 +284,8 @@ const getBranches = async (req, res, next) => {
         b.opening_time,
         b.closing_time,
         b.is_active,
+        b.created_by,
+        cb.full_name AS created_by_name,
         b.created_at,
         b.updated_at,
         g.name as gym_name
@@ -329,6 +334,8 @@ const getBranchById = async (req, res, next) => {
         b.opening_time,
         b.closing_time,
         b.is_active,
+        b.created_by,
+        cb.full_name AS created_by_name,
         b.created_at,
         b.updated_at,
         g.name as gym_name

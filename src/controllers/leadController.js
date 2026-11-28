@@ -150,8 +150,8 @@ const createLead = async (req, res, next) => {
     }
 
     const query = `
-      INSERT INTO leads (branch_id, full_name, email, phone, status, source, notes, interest_in, follow_up_date)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      INSERT INTO leads (branch_id, full_name, email, phone, status, source, notes, interest_in, follow_up_date, created_by)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *;
     `;
     const values = [
@@ -164,6 +164,7 @@ const createLead = async (req, res, next) => {
       notes || null,
       interest_in || null,
       parsedFollowUpDate,
+      req.user?.id || null,
     ];
     
     const result = await pool.query(query, values);
@@ -191,6 +192,7 @@ const getLeads = async (req, res, next) => {
       FROM leads l
       LEFT JOIN branches b ON l.branch_id = b.id
       LEFT JOIN gyms g ON b.gym_id = g.id
+      LEFT JOIN users cb ON cb.id = l.created_by
     `;
     let conditions = [];
     let countParams = [];
@@ -262,7 +264,7 @@ const getLeads = async (req, res, next) => {
 
     const countQuery = `SELECT COUNT(*) ${baseQuery}`;
     const dataQuery = `
-      SELECT l.*, g.name as gym_name, b.name as branch_name 
+      SELECT l.*, g.name as gym_name, b.name as branch_name, cb.full_name as created_by_name 
       ${baseQuery}
       ${orderClause}
       LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}
